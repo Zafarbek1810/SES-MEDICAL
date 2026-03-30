@@ -1,0 +1,59 @@
+# Backend API (saqlangan manzil)
+Base URL: http://5.42.122.27:8087/api
+
+Endpoints:
+- POST /auth/login
+  Body JSON: { "username": "string", "password": "string" }
+
+- POST /auth/logout
+  (odatda Authorization: Bearer <accessToken>)
+
+- POST /auth/refresh
+  Body JSON: { "refreshToken": "string" }
+
+- GET /laboratories — barcha laboratoriyalar
+- GET /laboratories/{id}
+- POST /laboratories — body: { "nameUz": "string", "nameRu": "string" }
+- PUT /laboratories/{id} — xuddi shu body
+- DELETE /laboratories/{id}
+
+- GET /analyses/admin — admin panel: barcha tahlillar
+- GET /analyses/{id}
+- POST /analyses — body: { "nameUz": "string", "nameRu": "string", "laboratoryId": number }
+- PUT /analyses/{id} — xuddi shu body
+- DELETE /analyses/{id}
+
+# Tahlil narxlari
+- GET /analysis-prices — barcha narxlarni
+- GET /analysis-prices/{id}
+- POST /analysis-prices — body: { "analysisId": number, "price": number, "regionId": number, "districtId": number }
+- PUT /analysis-prices/{id} — xuddi shu body
+- DELETE /analysis-prices/{id}
+
+(Kodda: src/services/analysisPricesApi.ts)
+
+# Foydalanuvchilar
+- GET /users?page=&size= — sahifalangan ro‘yxat (Spring Page yoki massiv)
+- GET /users/{id}
+- POST /users — body: username, firstName, lastName, surname, password, phoneNumber, roleId, regionId, districtId
+- PUT /users — body: id, username, firstName, lastName, surname, phoneNumber, roleId, password (ixtiyoriy)
+- DELETE /users/{id}
+
+(Kodda: src/services/usersApi.ts)
+
+# Ish joylari (workplaces)
+- GET /workplaces
+- GET /workplaces/{id}
+- POST /workplaces — body: { "name": "string", "regionId": number, "districtId": number }
+- PUT /workplaces/{id} — xuddi shu body
+- DELETE /workplaces/{id}
+
+(Kodda: src/services/workplacesApi.ts)
+
+# Spravochniklar (GET) — rollar, hududlar
+- GET /roles
+- GET /regions
+- GET /districts?regionId={id} — majburiy: tumanlar tanlangan viloyat bo‘yicha
+- GET /villages
+
+(Kodda: src/config/reference-endpoints.ts va src/services/referenceDataApi.ts)
