@@ -17,7 +17,10 @@ import {
   User,
   Sun,
   Moon,
-  Activity
+  Activity,
+  Calendar,
+  Briefcase,
+  ShoppingBag,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import {
@@ -30,7 +33,13 @@ import {
 } from "../components/ui/dropdown-menu";
 import { Badge } from "../components/ui/badge";
 import { useTheme } from "../components/ThemeProvider";
-import { getPathForRole, getStoredUser, isAuthenticated, logoutApi, normalizeRoleKey } from "../../services/auth";
+import {
+  getPathForRole,
+  getStoredUser,
+  isAuthenticated,
+  logoutApi,
+  normalizeRoleKey,
+} from "../../services/auth";
 import { fetchRoles, roleCodeToLabel, roleReferenceLabel, type ReferenceItem } from "../../services/referenceDataApi";
 import { toast } from "sonner";
 
@@ -55,11 +64,19 @@ const cashierNavItems: DashboardNavItem[] = [
   },
   {
     id: "cashier-work",
-    name: "Asosiy ishlar",
+    name: "Ro'yhatga olish",
     shortName: "Kassa",
     path: "/cashier/work",
     icon: ClipboardList,
     color: "text-blue-600 dark:text-blue-400",
+  },
+  {
+    id: "cashier-orders",
+    name: "Buyurtmalar",
+    shortName: "Buyurtmalar",
+    path: "/cashier/orders",
+    icon: ShoppingBag,
+    color: "text-green-600 dark:text-green-400",
   },
   {
     id: "cashier-analyses",
@@ -70,6 +87,33 @@ const cashierNavItems: DashboardNavItem[] = [
     color: "text-teal-600 dark:text-teal-400",
   },
 ];
+
+const sanMinimumNavStats: DashboardNavItem = {
+  id: "san-minimum-stats",
+  name: "Statistika",
+  shortName: "Hisobot",
+  path: "/san-minimum/stats",
+  icon: BarChart3,
+  color: "text-sky-600 dark:text-sky-400",
+};
+
+const sanMinimumNavBase: DashboardNavItem = {
+  id: "san-minimum",
+  name: "San minimum",
+  shortName: "Ro‘yxat",
+  path: "/san-minimum",
+  icon: Calendar,
+  color: "text-violet-600 dark:text-violet-400",
+};
+
+const adminEmployeeApisNav: DashboardNavItem = {
+  id: "admin-employee-apis",
+  name: "Xodim",
+  shortName: "Xodimlar",
+  path: "/admin/employees",
+  icon: Briefcase,
+  color: "text-amber-600 dark:text-amber-400",
+};
 
 const roles: DashboardNavItem[] = [
   { id: "laborant", name: "Laborant", shortName: "Laborant", path: "/laborant", icon: Microscope, color: "text-green-600 dark:text-green-400" },
@@ -101,10 +145,18 @@ function mergeNavLabelFromApi(base: DashboardNavItem, roleKey: string, apiRoles:
 
 function resolveRolesForUser(role: string | undefined, apiRoles: ReferenceItem[]): DashboardNavItem[] {
   const allowedPath = getPathForRole(role);
+  const key = normalizeRoleKey(role ?? "");
+  if (key === "SAN_MINIMUM") {
+    return [sanMinimumNavStats, mergeNavLabelFromApi(sanMinimumNavBase, key, apiRoles)];
+  }
   if (allowedPath.startsWith("/cashier")) {
     return cashierNavItems;
   }
-  const key = normalizeRoleKey(role ?? "");
+  if (key === "ADMIN" || key === "ADMINISTRATOR") {
+    const baseAdmin = ROLE_NAV_BY_CODE[key] ?? roles.find((r) => r.path === allowedPath);
+    const adminNav = baseAdmin ? mergeNavLabelFromApi(baseAdmin, key, apiRoles) : undefined;
+    return adminNav ? [adminNav, adminEmployeeApisNav] : [adminEmployeeApisNav];
+  }
   const fromCode = key ? ROLE_NAV_BY_CODE[key] : undefined;
   const fromPath = roles.find((r) => r.path === allowedPath);
   const base = fromCode ?? fromPath;
@@ -135,6 +187,17 @@ function navPathMatches(pathname: string, navPath: string): boolean {
   }
   if (navPath === "/cashier/analyses") {
     return pathname === "/cashier/analyses" || pathname.startsWith("/cashier/analyses/");
+  }
+  if (navPath === "/san-minimum/stats") {
+    return pathname === "/san-minimum/stats" || pathname.startsWith("/san-minimum/stats/");
+  }
+  if (navPath === "/san-minimum") {
+    return pathname === "/san-minimum" || pathname === "/san-minimum/";
+  }
+  if (navPath === "/admin") {
+    // Adminning asosiy paneli faqat aynan /admin da aktiv bo‘lsin,
+    // ichki yo‘llar (masalan, /admin/employees) uchun alohida bandlar mavjud.
+    return pathname === "/admin";
   }
   return pathname === navPath || pathname.startsWith(`${navPath}/`);
 }
@@ -172,6 +235,17 @@ export default function DashboardLayout() {
       navigate("/login", { replace: true });
     }
   }, [navigate]);
+
+  /** SAN_MINIMUM roli kassa yo‘llariga tushib qolmasin */
+  useEffect(() => {
+    if (!isAuthenticated()) return;
+    const rk = normalizeRoleKey(getStoredUser()?.role);
+    if (rk !== "SAN_MINIMUM") return;
+    const p = location.pathname;
+    if (p === "/" || p.startsWith("/cashier")) {
+      navigate("/san-minimum/stats", { replace: true });
+    }
+  }, [location.pathname, navigate]);
 
   const handleRoleChange = (roleName: string, path: string) => {
     void roleName;

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { motion } from "motion/react";
 import { QRCodeSVG } from "qrcode.react";
 import { Copy, Check, Mail, MessageSquare, Link as LinkIcon, Smartphone } from "lucide-react";

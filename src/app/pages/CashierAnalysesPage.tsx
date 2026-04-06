@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { QrCode, ChevronLeft, ChevronRight } from "lucide-react";
+import { QrCode, ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
@@ -164,6 +164,7 @@ export default function CashierAnalysesPage() {
 
   const [shareOpen, setShareOpen] = useState(false);
   const [shareRow, setShareRow] = useState<OrderDetailListItem | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -238,94 +239,112 @@ export default function CashierAnalysesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Filter</CardTitle>
-          <CardDescription>Laboratoriya, holat, tahlil, bemor va namuna bo‘yicha</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={clearFilters}>
-              Tozalash
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle>Filter</CardTitle>
+              <CardDescription>Laboratoriya, holat, tahlil, bemor va namuna bo‘yicha</CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="shrink-0"
+              onClick={() => setFiltersOpen((v) => !v)}
+            >
+              <Filter className="h-4 w-4 mr-2" />
+              Filterlash
             </Button>
           </div>
-          <div className="overflow-x-auto">
-            <div className="flex min-w-[900px] flex-nowrap items-end gap-2 xl:min-w-0">
-              <div className="min-w-0 flex-1 space-y-2">
-                <Label className="text-xs">Laboratoriya</Label>
-                <Select value={filterLab || "all"} onValueChange={(v) => patchFilters({ filterLab: v === "all" ? "" : v })}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Barchasi" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Barchasi</SelectItem>
-                    {laboratories.map((l) => (
-                      <SelectItem key={l.id} value={String(l.id)}>
-                        {l.nameUz}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+        </CardHeader>
+        {filtersOpen && (
+          <CardContent className="space-y-3">
+            <div className="rounded-md border bg-muted/30 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium">Tahlillarni filterlash</p>
+                <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
+                  Tozalash
+                </Button>
               </div>
-              <div className="min-w-0 flex-1 space-y-2">
-                <Label className="text-xs">Natija holati</Label>
-                <Select
-                  value={filterStatus || "all"}
-                  onValueChange={(v) => patchFilters({ filterStatus: v === "all" ? "" : v })}
-                  disabled={!enums}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Barchasi" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Barchasi</SelectItem>
-                    {(enums?.analysisStates ?? []).map((e) => (
-                      <SelectItem key={e.value} value={String(e.value)}>
-                        {enumEntryDisplayLabel(e)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="min-w-0 flex-1 space-y-2">
-                <Label className="text-xs">Tahlil</Label>
-                <Select value={filterAnalysisId || "all"} onValueChange={(v) => patchFilters({ filterAnalysisId: v === "all" ? "" : v })}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Barchasi" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-[min(60vh,320px)]">
-                    <SelectItem value="all">Barchasi</SelectItem>
-                    {analyses.map((a) => (
-                      <SelectItem key={a.id} value={String(a.id)}>
-                        {a.nameUz || `Tahlil #${a.id}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="min-w-0 flex-1 space-y-2">
-                <Label htmlFor="cdf-patient" className="text-xs">
-                  Bemor nomi
-                </Label>
-                <Input
-                  id="cdf-patient"
-                  value={filterPatient}
-                  onChange={(e) => setFilterPatient(e.target.value)}
-                  placeholder="Qidiruv…"
-                />
-              </div>
-              <div className="min-w-0 flex-1 space-y-2">
-                <Label htmlFor="cdf-sample" className="text-xs">
-                  Namuna / obyekt
-                </Label>
-                <Input
-                  id="cdf-sample"
-                  value={filterSample}
-                  onChange={(e) => setFilterSample(e.target.value)}
-                  placeholder="Qidiruv…"
-                />
+              <div className="overflow-x-auto">
+                <div className="flex min-w-[900px] flex-nowrap items-end gap-2 xl:min-w-0">
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Label className="text-xs">Laboratoriya</Label>
+                    <Select value={filterLab || "all"} onValueChange={(v) => patchFilters({ filterLab: v === "all" ? "" : v })}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Barchasi" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Barchasi</SelectItem>
+                        {laboratories.map((l) => (
+                          <SelectItem key={l.id} value={String(l.id)}>
+                            {l.nameUz}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Label className="text-xs">Natija holati</Label>
+                    <Select
+                      value={filterStatus || "all"}
+                      onValueChange={(v) => patchFilters({ filterStatus: v === "all" ? "" : v })}
+                      disabled={!enums}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Barchasi" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Barchasi</SelectItem>
+                        {(enums?.analysisStates ?? []).map((e) => (
+                          <SelectItem key={e.value} value={String(e.value)}>
+                            {enumEntryDisplayLabel(e)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Label className="text-xs">Tahlil</Label>
+                    <Select value={filterAnalysisId || "all"} onValueChange={(v) => patchFilters({ filterAnalysisId: v === "all" ? "" : v })}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Barchasi" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[min(60vh,320px)]">
+                        <SelectItem value="all">Barchasi</SelectItem>
+                        {analyses.map((a) => (
+                          <SelectItem key={a.id} value={String(a.id)}>
+                            {a.nameUz || `Tahlil #${a.id}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Label htmlFor="cdf-patient" className="text-xs">
+                      Bemor nomi
+                    </Label>
+                    <Input
+                      id="cdf-patient"
+                      value={filterPatient}
+                      onChange={(e) => setFilterPatient(e.target.value)}
+                      placeholder="Qidiruv…"
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Label htmlFor="cdf-sample" className="text-xs">
+                      Namuna / obyekt
+                    </Label>
+                    <Input
+                      id="cdf-sample"
+                      value={filterSample}
+                      onChange={(e) => setFilterSample(e.target.value)}
+                      placeholder="Qidiruv…"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </CardContent>
+          </CardContent>
+        )}
       </Card>
 
       <Card>

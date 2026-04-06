@@ -94,6 +94,7 @@ export function getPathForRole(role: string | undefined): string {
     LABORATORY_DIRECTOR: "/lab-director",
     COMPANY_DIRECTOR: "/company-director",
     DIRECTOR: "/company-director",
+    SAN_MINIMUM: "/san-minimum/stats",
   };
   return map[key] ?? "/cashier";
 }

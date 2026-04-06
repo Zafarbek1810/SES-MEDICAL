@@ -61,6 +61,10 @@ import {
   fetchWorkplacesAdmin,
   updateWorkplace,
 } from "../../services/workplacesApi";
+import type { CourseDto } from "../../services/coursesApi";
+import { createCourse, fetchCourses, updateCourse } from "../../services/coursesApi";
+import type { CoursePriceDto } from "../../services/coursePricesApi";
+import { createCoursePrice, fetchCoursePrices, updateCoursePrice } from "../../services/coursePricesApi";
 
 type DeleteTarget =
   | { type: "lab"; id: number; name: string }
@@ -128,6 +132,16 @@ export default function AdminPanel() {
   const [loadingAnalyses, setLoadingAnalyses] = useState(false);
   const [analysisPrices, setAnalysisPrices] = useState<AnalysisPriceDto[]>([]);
   const [loadingPrices, setLoadingPrices] = useState(false);
+  const [courses, setCourses] = useState<CourseDto[]>([]);
+  const [loadingCourses, setLoadingCourses] = useState(false);
+  const [coursePrices, setCoursePrices] = useState<CoursePriceDto[]>([]);
+  const [loadingCoursePrices, setLoadingCoursePrices] = useState(false);
+  const [coursePricePage, setCoursePricePage] = useState(0);
+  const [coursePriceSize, setCoursePriceSize] = useState(10);
+  const [coursePriceTotalPages, setCoursePriceTotalPages] = useState(1);
+  const [coursePriceTotalElements, setCoursePriceTotalElements] = useState(0);
+  const [coursePriceFilterRegionId, setCoursePriceFilterRegionId] = useState("");
+  const [coursePriceFilterDistrictId, setCoursePriceFilterDistrictId] = useState("");
   const [regions, setRegions] = useState<ReferenceItem[]>([]);
   const [districts, setDistricts] = useState<ReferenceItem[]>([]);
   const [loadingRefGeo, setLoadingRefGeo] = useState(false);
@@ -138,6 +152,8 @@ export default function AdminPanel() {
   const [isLabDialogOpen, setIsLabDialogOpen] = useState(false);
   const [isPriceDialogOpen, setIsPriceDialogOpen] = useState(false);
   const [isWorkplaceDialogOpen, setIsWorkplaceDialogOpen] = useState(false);
+  const [isCourseDialogOpen, setIsCourseDialogOpen] = useState(false);
+  const [isCoursePriceDialogOpen, setIsCoursePriceDialogOpen] = useState(false);
 
   const [workplaces, setWorkplaces] = useState<WorkplaceDto[]>([]);
   const [loadingWorkplaces, setLoadingWorkplaces] = useState(false);
@@ -150,6 +166,8 @@ export default function AdminPanel() {
   const [editingLab, setEditingLab] = useState<LaboratoryDto | null>(null);
   const [editingAnalysis, setEditingAnalysis] = useState<AnalysisDto | null>(null);
   const [editingPrice, setEditingPrice] = useState<AnalysisPriceDto | null>(null);
+  const [editingCourse, setEditingCourse] = useState<CourseDto | null>(null);
+  const [editingCoursePrice, setEditingCoursePrice] = useState<CoursePriceDto | null>(null);
 
   const [labForm, setLabForm] = useState({ nameUz: "", nameRu: "" });
   const [analysisForm, setAnalysisForm] = useState({
@@ -159,6 +177,13 @@ export default function AdminPanel() {
   });
   const [priceForm, setPriceForm] = useState({
     analysisId: "",
+    price: "",
+    regionId: "",
+    districtId: "",
+  });
+  const [courseForm, setCourseForm] = useState({ name: "", isActive: true });
+  const [coursePriceForm, setCoursePriceForm] = useState({
+    courseId: "",
     price: "",
     regionId: "",
     districtId: "",
@@ -239,6 +264,47 @@ export default function AdminPanel() {
     }
   };
 
+  const loadCourses = async () => {
+    setLoadingCourses(true);
+    try {
+      const list = await fetchCourses();
+      setCourses(list);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Kurslar yuklanmadi");
+      setCourses([]);
+    } finally {
+      setLoadingCourses(false);
+    }
+  };
+
+  const loadCoursePrices = async (pageArg?: number, sizeArg?: number) => {
+    setLoadingCoursePrices(true);
+    try {
+      const page = pageArg ?? coursePricePage;
+      const size = sizeArg ?? coursePriceSize;
+      const filters: { regionId?: number; districtId?: number } = {};
+      const rid = Number(coursePriceFilterRegionId);
+      const did = Number(coursePriceFilterDistrictId);
+      if (Number.isFinite(rid) && rid > 0) {
+        filters.regionId = rid;
+      }
+      if (Number.isFinite(did) && did > 0) {
+        filters.districtId = did;
+      }
+      const res = await fetchCoursePrices(page, size, filters);
+      setCoursePrices(res.items);
+      setCoursePricePage(res.page);
+      setCoursePriceSize(res.size);
+      setCoursePriceTotalPages(Math.max(1, res.totalPages));
+      setCoursePriceTotalElements(res.totalElements);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Kurs narxlarini yuklab bo‘lmadi");
+      setCoursePrices([]);
+    } finally {
+      setLoadingCoursePrices(false);
+    }
+  };
+
   const loadWorkplaces = async () => {
     setLoadingWorkplaces(true);
     try {
@@ -300,7 +366,13 @@ export default function AdminPanel() {
     void loadReferenceGeo();
     void loadRoles();
     void loadWorkplaces();
+    void loadCourses();
+    void loadCoursePrices(0, coursePriceSize);
   }, []);
+
+  useEffect(() => {
+    void loadCoursePrices(coursePricePage, coursePriceSize);
+  }, [coursePricePage, coursePriceSize, coursePriceFilterRegionId, coursePriceFilterDistrictId]);
 
   useEffect(() => {
     void loadUsers();
@@ -359,6 +431,64 @@ export default function AdminPanel() {
       cancelled = true;
     };
   }, [priceForm.regionId]);
+
+  /** Kurs narxi formasi: tanlangan viloyat bo‘yicha GET /districts?regionId=… */
+  const [coursePriceDistricts, setCoursePriceDistricts] = useState<ReferenceItem[]>([]);
+  const [loadingCoursePriceDistricts, setLoadingCoursePriceDistricts] = useState(false);
+  const [coursePriceFilterDistricts, setCoursePriceFilterDistricts] = useState<ReferenceItem[]>([]);
+  const [loadingCoursePriceFilterDistricts, setLoadingCoursePriceFilterDistricts] = useState(false);
+  useEffect(() => {
+    const rid = Number(coursePriceForm.regionId);
+    if (!Number.isFinite(rid) || rid <= 0) {
+      setCoursePriceDistricts([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingCoursePriceDistricts(true);
+    void fetchDistricts(rid)
+      .then((list) => {
+        if (!cancelled) setCoursePriceDistricts(list);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "Tumanlar yuklanmadi");
+          setCoursePriceDistricts([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCoursePriceDistricts(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [coursePriceForm.regionId]);
+
+  /** Kurs narxlari filteri: viloyat → tumanlar */
+  useEffect(() => {
+    const rid = Number(coursePriceFilterRegionId);
+    if (!Number.isFinite(rid) || rid <= 0) {
+      setCoursePriceFilterDistricts([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingCoursePriceFilterDistricts(true);
+    void fetchDistricts(rid)
+      .then((list) => {
+        if (!cancelled) setCoursePriceFilterDistricts(list);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "Tumanlar yuklanmadi");
+          setCoursePriceFilterDistricts([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCoursePriceFilterDistricts(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [coursePriceFilterRegionId]);
 
   /** Ish joyi formasi: viloyat → tumanlar */
   useEffect(() => {
@@ -647,6 +777,121 @@ export default function AdminPanel() {
     }
   };
 
+  const openCourseCreate = () => {
+    setEditingCourse(null);
+    setCourseForm({ name: "", isActive: true });
+    setIsCourseDialogOpen(true);
+  };
+
+  const openCourseEdit = (row: CourseDto) => {
+    setEditingCourse(row);
+    setCourseForm({ name: row.name, isActive: row.isActive });
+    setIsCourseDialogOpen(true);
+  };
+
+  const handleSaveCourse = async () => {
+    if (!courseForm.name.trim()) {
+      toast.error("Kurs nomini kiriting");
+      return;
+    }
+    try {
+      if (editingCourse) {
+        await updateCourse(editingCourse.id, {
+          name: courseForm.name.trim(),
+          isActive: courseForm.isActive,
+        });
+        toast.success("Kurs yangilandi");
+      } else {
+        await createCourse({
+          name: courseForm.name.trim(),
+          isActive: courseForm.isActive,
+        });
+        toast.success("Kurs qo‘shildi");
+      }
+      setIsCourseDialogOpen(false);
+      setEditingCourse(null);
+      setCourseForm({ name: "", isActive: true });
+      await loadCourses();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Xatolik");
+    }
+  };
+
+  const openCoursePriceCreate = () => {
+    setEditingCoursePrice(null);
+    setCoursePriceForm({
+      courseId: "",
+      price: "",
+      regionId: "",
+      districtId: "",
+    });
+    setIsCoursePriceDialogOpen(true);
+  };
+
+  const openCoursePriceEdit = (row: CoursePriceDto) => {
+    setEditingCoursePrice(row);
+    setCoursePriceForm({
+      courseId: String(row.courseId),
+      price: String(row.price),
+      regionId: String(row.regionId),
+      districtId: String(row.districtId),
+    });
+    setIsCoursePriceDialogOpen(true);
+  };
+
+  const handleSaveCoursePrice = async () => {
+    const cid = Number(coursePriceForm.courseId);
+    const priceNum = Number(coursePriceForm.price);
+    const rid = Number(coursePriceForm.regionId);
+    const did = Number(coursePriceForm.districtId);
+    if (!Number.isFinite(cid) || cid <= 0) {
+      toast.error("Kursni tanlang");
+      return;
+    }
+    if (!Number.isFinite(priceNum) || priceNum < 0) {
+      toast.error("Narxni to‘g‘ri kiriting");
+      return;
+    }
+    if (!Number.isFinite(rid) || rid <= 0) {
+      toast.error("Viloyatni tanlang");
+      return;
+    }
+    if (!Number.isFinite(did) || did <= 0) {
+      toast.error("Tumanni tanlang");
+      return;
+    }
+    try {
+      if (editingCoursePrice) {
+        await updateCoursePrice(editingCoursePrice.id, {
+          courseId: cid,
+          price: priceNum,
+          regionId: rid,
+          districtId: did,
+        });
+        toast.success("Kurs narxi yangilandi");
+      } else {
+        await createCoursePrice({
+          courseId: cid,
+          price: priceNum,
+          regionId: rid,
+          districtId: did,
+        });
+        toast.success("Kurs narxi qo‘shildi");
+      }
+      setIsCoursePriceDialogOpen(false);
+      setEditingCoursePrice(null);
+      setCoursePriceForm({
+        courseId: "",
+        price: "",
+        regionId: "",
+        districtId: "",
+      });
+      await loadCoursePrices();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Xatolik");
+    }
+  };
+
   const openUserCreate = () => {
     setEditingUser(null);
     setUserForm(emptyUserForm());
@@ -865,6 +1110,14 @@ export default function AdminPanel() {
           <TabsTrigger value="labs">
             <Building2 className="h-4 w-4 mr-2" />
             Laboratoriyalar
+          </TabsTrigger>
+          <TabsTrigger value="courses">
+            <Banknote className="h-4 w-4 mr-2" />
+            Kurslar
+          </TabsTrigger>
+          <TabsTrigger value="course-prices">
+            <Banknote className="h-4 w-4 mr-2" />
+            Kurs narxlari
           </TabsTrigger>
           <TabsTrigger value="jobs">
             <Briefcase className="h-4 w-4 mr-2" />
@@ -1475,6 +1728,438 @@ export default function AdminPanel() {
                   )}
                 </TableBody>
               </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Kurslar — API */}
+        <TabsContent value="courses" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Kurslar</CardTitle>
+                  <CardDescription>Tizimdagi barcha kurslar ro‘yxati</CardDescription>
+                </div>
+                <Dialog
+                  open={isCourseDialogOpen}
+                  onOpenChange={(open) => {
+                    setIsCourseDialogOpen(open);
+                    if (!open) {
+                      setEditingCourse(null);
+                      setCourseForm({ name: "", isActive: true });
+                    }
+                  }}
+                >
+                  <DialogTrigger asChild>
+                    <Button className="bg-blue-600 hover:bg-blue-700" onClick={openCourseCreate}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Kurs qo‘shish
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>{editingCourse ? "Kursni tahrirlash" : "Yangi kurs"}</DialogTitle>
+                      <DialogDescription>
+                        {editingCourse ? "Ma’lumotlarni yangilang" : "Kurs nomi va holatini kiriting"}
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="courseName">Kurs nomi</Label>
+                        <Input
+                          id="courseName"
+                          value={courseForm.name}
+                          onChange={(e) => setCourseForm({ ...courseForm, name: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Holati</Label>
+                        <Select
+                          value={courseForm.isActive ? "active" : "inactive"}
+                          onValueChange={(v) =>
+                            setCourseForm({ ...courseForm, isActive: v === "active" })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Holatni tanlang" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="active">Faol</SelectItem>
+                            <SelectItem value="inactive">Nofaol</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        onClick={() => void handleSaveCourse()}
+                        className="w-full bg-blue-600 hover:bg-blue-700"
+                      >
+                        {editingCourse ? "Saqlash" : "Kursni qo‘shish"}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>№</TableHead>
+                    <TableHead>Nomi</TableHead>
+                    <TableHead>Holat</TableHead>
+                    <TableHead>Amallar</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loadingCourses ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                        Yuklanmoqda...
+                      </TableCell>
+                    </TableRow>
+                  ) : courses.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                        Kurslar yo‘q
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    courses.map((row, idx) => (
+                      <TableRow key={row.id}>
+                        <TableCell className="font-medium tabular-nums">{idx + 1}</TableCell>
+                        <TableCell>{row.name}</TableCell>
+                        <TableCell>
+                          <Badge
+                            className={
+                              row.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700"
+                            }
+                          >
+                            {row.isActive ? "Faol" : "Nofaol"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => openCourseEdit(row)}>
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Kurs narxlari — API */}
+        <TabsContent value="course-prices" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Kurs narxlari</CardTitle>
+                  <CardDescription>Kurs, viloyat va tuman bo‘yicha narxlar</CardDescription>
+                </div>
+                <Dialog
+                  open={isCoursePriceDialogOpen}
+                  onOpenChange={(open) => {
+                    setIsCoursePriceDialogOpen(open);
+                    if (!open) {
+                      setEditingCoursePrice(null);
+                      setCoursePriceForm({
+                        courseId: "",
+                        price: "",
+                        regionId: "",
+                        districtId: "",
+                      });
+                    }
+                  }}
+                >
+                  <DialogTrigger asChild>
+                    <Button className="bg-blue-600 hover:bg-blue-700" onClick={openCoursePriceCreate}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Narx qo‘shish
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>
+                        {editingCoursePrice ? "Kurs narxini tahrirlash" : "Kurs narxi qo‘shish"}
+                      </DialogTitle>
+                      <DialogDescription>
+                        {editingCoursePrice
+                          ? "Qiymatlarni yangilang"
+                          : "Kurs, narx va hududni tanlang"}
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Kurs</Label>
+                        <Select
+                          value={coursePriceForm.courseId}
+                          onValueChange={(v) =>
+                            setCoursePriceForm({ ...coursePriceForm, courseId: v })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Kursni tanlang" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {courses.map((c) => (
+                              <SelectItem key={c.id} value={String(c.id)}>
+                                {c.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {courses.length === 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            Avval «Kurslar» bo‘limida kurs qo‘shing.
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="coursePriceAmount">Narx (so‘m)</Label>
+                        <Input
+                          id="coursePriceAmount"
+                          type="number"
+                          min={0}
+                          step={1}
+                          placeholder="Masalan: 500000"
+                          value={coursePriceForm.price}
+                          onChange={(e) =>
+                            setCoursePriceForm({ ...coursePriceForm, price: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Viloyat</Label>
+                        <Select
+                          value={coursePriceForm.regionId}
+                          onValueChange={(v) =>
+                            setCoursePriceForm({
+                              ...coursePriceForm,
+                              regionId: v,
+                              districtId: "",
+                            })
+                          }
+                          disabled={loadingRefGeo}
+                        >
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={loadingRefGeo ? "Yuklanmoqda..." : "Viloyatni tanlang"}
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {regions.map((r) => (
+                              <SelectItem key={r.id} value={String(r.id)}>
+                                {referenceLabel(r)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Tuman</Label>
+                        <Select
+                          value={coursePriceForm.districtId}
+                          onValueChange={(v) =>
+                            setCoursePriceForm({ ...coursePriceForm, districtId: v })
+                          }
+                          disabled={loadingCoursePriceDistricts || !coursePriceForm.regionId}
+                        >
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={
+                                !coursePriceForm.regionId
+                                  ? "Avval viloyatni tanlang"
+                                  : loadingCoursePriceDistricts
+                                    ? "Yuklanmoqda..."
+                                    : "Tumanni tanlang"
+                              }
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {coursePriceDistricts.map((d) => (
+                              <SelectItem key={d.id} value={String(d.id)}>
+                                {referenceLabel(d)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {coursePriceForm.regionId &&
+                          coursePriceDistricts.length === 0 &&
+                          !loadingCoursePriceDistricts && (
+                            <p className="text-xs text-muted-foreground">
+                              Bu viloyat uchun tumanlar topilmadi yoki ro‘yxat bo‘sh.
+                            </p>
+                          )}
+                      </div>
+                      <Button
+                        onClick={() => void handleSaveCoursePrice()}
+                        className="w-full bg-blue-600 hover:bg-blue-700"
+                      >
+                        {editingCoursePrice ? "Saqlash" : "Narx qo‘shish"}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-start">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <div className="space-y-1">
+                    <Label>Viloyat bo‘yicha filter</Label>
+                    <Select
+                      value={coursePriceFilterRegionId}
+                      onValueChange={(v) => {
+                        setCoursePriceFilterRegionId(v === "__all" ? "" : v);
+                        setCoursePriceFilterDistrictId("");
+                        setCoursePricePage(0);
+                      }}
+                    >
+                      <SelectTrigger className="w-[200px]">
+                        <SelectValue placeholder="Barchasi" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all">Barchasi</SelectItem>
+                        {regions.map((r) => (
+                          <SelectItem key={r.id} value={String(r.id)}>
+                            {referenceLabel(r)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Tuman bo‘yicha filter</Label>
+                    <Select
+                      value={coursePriceFilterDistrictId}
+                      onValueChange={(v) => {
+                        setCoursePriceFilterDistrictId(v === "__all" ? "" : v);
+                        setCoursePricePage(0);
+                      }}
+                      disabled={loadingCoursePriceFilterDistricts || !coursePriceFilterRegionId}
+                    >
+                      <SelectTrigger className="w-[220px]">
+                        <SelectValue
+                          placeholder={
+                            !coursePriceFilterRegionId
+                              ? "Avval viloyatni tanlang"
+                              : loadingCoursePriceFilterDistricts
+                                ? "Yuklanmoqda..."
+                                : "Barchasi"
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all">Barchasi</SelectItem>
+                        {coursePriceFilterDistricts.map((d) => (
+                          <SelectItem key={d.id} value={String(d.id)}>
+                            {referenceLabel(d)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>№</TableHead>
+                    <TableHead>Kurs</TableHead>
+                    <TableHead>Narx</TableHead>
+                    <TableHead>Viloyat</TableHead>
+                    <TableHead>Tuman</TableHead>
+                    <TableHead>Amallar</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loadingCoursePrices ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        Yuklanmoqda...
+                      </TableCell>
+                    </TableRow>
+                  ) : coursePrices.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        Kurs narxlari yo‘q
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    coursePrices.map((row, idx) => (
+                      <TableRow key={row.id}>
+                        <TableCell className="font-medium tabular-nums">
+                          {coursePricePage * coursePriceSize + idx + 1}
+                        </TableCell>
+                        <TableCell>{row.courseName ?? `ID ${row.courseId}`}</TableCell>
+                        <TableCell>{new Intl.NumberFormat("uz-UZ").format(row.price)} so‘m</TableCell>
+                        <TableCell>{row.regionNameUz ?? row.regionId}</TableCell>
+                        <TableCell>{row.districtNameUz ?? row.districtId}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => openCoursePriceEdit(row)}>
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={String(coursePriceSize)}
+                    onValueChange={(v) => {
+                      setCoursePriceSize(Number(v));
+                      setCoursePricePage(0);
+                    }}
+                  >
+                    <SelectTrigger className="w-[110px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10 / sahifa</SelectItem>
+                      <SelectItem value="20">20 / sahifa</SelectItem>
+                      <SelectItem value="50">50 / sahifa</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-sm text-muted-foreground">Jami: {coursePriceTotalElements} ta</p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={coursePricePage <= 0 || loadingCoursePrices}
+                    onClick={() => setCoursePricePage((p) => Math.max(0, p - 1))}
+                    aria-label="Oldingi sahifa"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-sm tabular-nums px-2">
+                    {coursePricePage + 1} / {coursePriceTotalPages}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={loadingCoursePrices || coursePricePage >= coursePriceTotalPages - 1}
+                    onClick={() => setCoursePricePage((p) => p + 1)}
+                    aria-label="Keyingi sahifa"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

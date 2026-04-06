@@ -64,6 +64,13 @@ export async function fetchWorkplaces(): Promise<WorkplaceDto[]> {
   return rows.map(normalizeWorkplaceDto).filter((x): x is WorkplaceDto => x !== null);
 }
 
+/** Foydalanuvchining lokatsiyasi bo‘yicha ish joylari */
+export async function fetchWorkplacesByUserLocation(): Promise<WorkplaceDto[]> {
+  const raw = await apiFetch<unknown>("/workplaces/by-user-location", { method: "GET" });
+  const rows = unwrapList<unknown>(raw);
+  return rows.map(normalizeWorkplaceDto).filter((x): x is WorkplaceDto => x !== null);
+}
+
 /** Admin panel uchun maxsus ro‘yxat endpointi */
 export async function fetchWorkplacesAdmin(): Promise<WorkplaceDto[]> {
   const raw = await apiFetch<unknown>("/workplaces/admin", { method: "GET" });

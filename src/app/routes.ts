@@ -2,11 +2,15 @@ import { createBrowserRouter } from "react-router";
 import LoginPage from "./pages/LoginPage";
 import CashierDashboard from "./pages/CashierDashboard";
 import CashierWorkPage from "./pages/CashierWorkPage";
+import CashierOrdersPage from "./pages/CashierOrdersPage";
 import CashierAnalysesPage from "./pages/CashierAnalysesPage";
+import SanMinimumPage from "./pages/SanMinimumPage";
+import SanMinimumStatsPage from "./pages/SanMinimumStatsPage";
 import LaborantDashboard from "./pages/LaborantDashboard";
 import LabDirectorDashboard from "./pages/LabDirectorDashboard";
 import CompanyDirectorDashboard from "./pages/CompanyDirectorDashboard";
 import AdminPanel from "./pages/AdminPanel";
+import EmployeesPage from "./pages/EmployeesPage";
 import DashboardLayout from "./layouts/DashboardLayout";
 import AnalysisDetail from "./pages/AnalysisDetail";
 import ClientResultPage from "./pages/ClientResultPage";
@@ -33,12 +37,24 @@ export const router = createBrowserRouter([
         Component: CashierWorkPage,
       },
       {
+        path: "cashier/orders",
+        Component: CashierOrdersPage,
+      },
+      {
         path: "cashier/analyses",
         Component: CashierAnalysesPage,
       },
       {
         path: "cashier",
         Component: CashierDashboard,
+      },
+      {
+        path: "san-minimum/stats",
+        Component: SanMinimumStatsPage,
+      },
+      {
+        path: "san-minimum",
+        Component: SanMinimumPage,
       },
       {
         path: "laborant",
@@ -59,6 +75,10 @@ export const router = createBrowserRouter([
       {
         path: "admin",
         Component: AdminPanel,
+      },
+      {
+        path: "admin/employees",
+        Component: EmployeesPage,
       },
     ],
   },

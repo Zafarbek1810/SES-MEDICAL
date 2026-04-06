@@ -1,12 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { DatePicker } from "antd";
+import {
+  DatePicker,
+  Modal,
+  Input as AntInput,
+  Select as AntSelect,
+  Button as AntButton,
+  Typography,
+  Space,
+} from "antd";
 import dayjs from "dayjs";
 import { Plus, Edit, Trash2, ChevronLeft, ChevronRight, Filter, Building2, MapPin, User } from "lucide-react";
 
 const { RangePicker } = DatePicker;
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Card, CardContent, CardHeader } from "../ui/card";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
@@ -39,12 +47,17 @@ import {
 } from "../../../services/ordersApi";
 import { fetchAnalyses, type AnalysisDto } from "../../../services/analysesApi";
 import { fetchAnalysisPrices, type AnalysisPriceDto } from "../../../services/analysisPricesApi";
-import { fetchPatients, type PatientDto } from "../../../services/patientsApi";
+import { fetchPatients, type FetchPatientsParams, type PatientDto } from "../../../services/patientsApi";
 import { fetchSamples, type SampleDto } from "../../../services/samplesApi";
 import { fetchLaboratories, type LaboratoryDto } from "../../../services/laboratoriesApi";
+import { fetchSanMinimums, type SanMinimumDto } from "../../../services/sanMinimumsApi";
+import { fetchActiveCourses, type CourseDto } from "../../../services/coursesApi";
+import { fetchCoursePrice, type CoursePriceDto } from "../../../services/coursePricesApi";
 import { formatTableDateTime } from "../../../utils/tableDateFormat";
 
 const PICKER_LIST_SIZE = 500;
+/** Buyurtma «Bemor» tanlovi uchun GET /patients — `availableForOrder=true` majburiy emas, lekin shu forma uchun true */
+const PATIENTS_QUERY_FOR_ORDER: FetchPatientsParams = { availableForOrder: true };
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -56,13 +69,27 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 function patientPickerLabel(p: PatientDto): string {
-  const name = [p.firstName, p.lastName].filter(Boolean).join(" ").trim();
+  const name = [p.firstName, p.lastName, p.surname].filter(Boolean).join(" ").trim();
   return name ? `${name} (#${p.id})` : `Bemor #${p.id}`;
 }
 
 function samplePickerLabel(s: SampleDto): string {
   const title = s.name?.trim() || s.sourceName?.trim();
   return title ? `${title} (#${s.id})` : `Namuna #${s.id}`;
+}
+
+function sanMinimumPickerLabel(m: SanMinimumDto): string {
+  const fio = [m.lastName, m.firstName, m.surname].filter(Boolean).join(" ").trim();
+  return fio ? `${fio} (#${m.id})` : `San minimum #${m.id}`;
+}
+
+function sanMinimumOrderDisplayName(o: OrderDto): string {
+  const fn = o.sanMinimumFirstName?.trim() ?? "";
+  const ln = o.sanMinimumLastName?.trim() ?? "";
+  const fio = [ln, fn].filter(Boolean).join(" ").trim();
+  if (fio) return fio;
+  if (o.sanMinimumId != null && o.sanMinimumId > 0) return `San minimum #${o.sanMinimumId}`;
+  return "—";
 }
 
 /** GET /enums `orderStates[].name` bo‘yicha rang (matn `labelUz` dan) */
@@ -152,10 +179,12 @@ function resolveOrderLaboratoryId(o: OrderDto): number {
 
 function orderToForm(o: OrderDto): OrderFormState {
   const labId = resolveOrderLaboratoryId(o);
+  const sanMinId = o.sanMinimumId != null && o.sanMinimumId > 0 ? o.sanMinimumId : null;
+  const patientOrSanId = sanMinId ?? o.patientId;
   return {
     orderType: String(o.orderType),
     laboratoryId: labId > 0 ? String(labId) : "",
-    patientId: String(o.patientId),
+    patientId: String(patientOrSanId ?? ""),
     sampleId: String(o.sampleId),
     paymentType: String(o.paymentType),
     paymentStatus: String(o.paymentStatus),
@@ -172,7 +201,12 @@ function orderToForm(o: OrderDto): OrderFormState {
 
 function formToBody(
   f: OrderFormState,
-  mode: { isHumanOrder: boolean; isObjectOrder: boolean },
+  mode: {
+    isHumanOrder: boolean;
+    isObjectOrder: boolean;
+    isSanMinimumOrder: boolean;
+    useSanMinimumPicker: boolean;
+  },
   priceByAnalysisId: Map<number, number>
 ): SaveOrderBody | null {
   const orderType = Number(f.orderType);
@@ -185,9 +219,17 @@ function formToBody(
     toast.error("Buyurtma turini tanlang");
     return null;
   }
-  if (!Number.isFinite(laboratoryId) || laboratoryId <= 0) {
-    toast.error("Laboratoriyani tanlang");
-    return null;
+  // SAN_MINIMUM uchun kurs tanlash majburiy, boshqa turlarda laboratoriya tanlash majburiy
+  if (mode.isSanMinimumOrder) {
+    if (!Number.isFinite(laboratoryId) || laboratoryId <= 0) {
+      toast.error("Kursni tanlang");
+      return null;
+    }
+  } else {
+    if (!Number.isFinite(laboratoryId) || laboratoryId <= 0) {
+      toast.error("Laboratoriyani tanlang");
+      return null;
+    }
   }
   if (mode.isObjectOrder) {
     if (!Number.isFinite(sampleId) || sampleId <= 0) {
@@ -197,6 +239,16 @@ function formToBody(
   } else if (mode.isHumanOrder) {
     if (!Number.isFinite(patientId) || patientId <= 0) {
       toast.error("HUMAN uchun bemor tanlang");
+      return null;
+    }
+  } else if (mode.isSanMinimumOrder) {
+    if (mode.useSanMinimumPicker) {
+      if (!Number.isFinite(patientId) || patientId <= 0) {
+        toast.error("San minimum o‘quvchini tanlang");
+        return null;
+      }
+    } else if (!Number.isFinite(patientId) || patientId <= 0) {
+      toast.error("SAN_MINIMUM uchun bemor tanlang");
       return null;
     }
   } else {
@@ -213,45 +265,97 @@ function formToBody(
     toast.error("To‘lov turini va holatini tanlang");
     return null;
   }
-  const details: SaveOrderBody["details"] = [];
-  for (const row of f.details) {
-    const analysisId = Number(row.analysisId);
-    const quantity = Number(row.quantity);
-    const pctRaw = Number(row.discountPercent);
-    const pct = Math.min(100, Math.max(0, Number.isFinite(pctRaw) ? pctRaw : 0));
-    if (!Number.isFinite(analysisId) || analysisId <= 0) {
-      toast.error("Har bir qatorda tahlil tanlang");
+  let details: SaveOrderBody["details"] = [];
+
+  // SAN_MINIMUM uchun details bo‘sh yuboriladi, faqat kurs va sanMinimum ishlatiladi
+  let rootDiscountPercent: number | undefined;
+  if (mode.isSanMinimumOrder) {
+    const row = f.details[0];
+    if (row) {
+      const pctRaw = Number(row.discountPercent);
+      const pct = Math.min(100, Math.max(0, Number.isFinite(pctRaw) ? pctRaw : 0));
+      rootDiscountPercent = Math.round(pct * 100) / 100;
+    }
+    details = [];
+  } else {
+    details = [];
+    for (const row of f.details) {
+      const analysisId = Number(row.analysisId);
+      const quantity = Number(row.quantity);
+      const pctRaw = Number(row.discountPercent);
+      const pct = Math.min(100, Math.max(0, Number.isFinite(pctRaw) ? pctRaw : 0));
+      if (!Number.isFinite(analysisId) || analysisId <= 0) {
+        toast.error("Har bir qatorda tahlil tanlang");
+        return null;
+      }
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        toast.error("Miqdor musbat bo‘lishi kerak");
+        return null;
+      }
+      const unitPrice = priceByAnalysisId.get(analysisId);
+      if (unitPrice == null) {
+        toast.error("Tanlangan tahlillar uchun narx topilmadi");
+        return null;
+      }
+      const discountPct = Math.round(pct * 100) / 100;
+      details.push({
+        analysisId,
+        discount: discountPct,
+        quantity,
+      });
+    }
+    if (details.length === 0) {
+      toast.error("Kamida bitta tahlil qatori qo‘shing");
       return null;
     }
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      toast.error("Miqdor musbat bo‘lishi kerak");
-      return null;
-    }
-    const unitPrice = priceByAnalysisId.get(analysisId);
-    if (unitPrice == null) {
-      toast.error("Tanlangan tahlillar uchun narx topilmadi");
-      return null;
-    }
-    const discountPct = Math.round(pct * 100) / 100;
-    details.push({
-      analysisId,
-      discount: discountPct,
-      quantity,
-    });
   }
-  if (details.length === 0) {
-    toast.error("Kamida bitta tahlil qatori qo‘shing");
-    return null;
+
+  let outPatientId: number | null;
+  let outSampleId: number | null;
+  let sanMinimumId: number | undefined;
+
+  if (mode.isObjectOrder) {
+    outPatientId = null;
+    outSampleId = Number.isFinite(sampleId) && sampleId > 0 ? sampleId : null;
+  } else if (mode.useSanMinimumPicker) {
+    outPatientId = null;
+    outSampleId = null;
+    sanMinimumId = Number.isFinite(patientId) && patientId > 0 ? patientId : undefined;
+  } else if (mode.isHumanOrder || mode.isSanMinimumOrder) {
+    outPatientId = Number.isFinite(patientId) && patientId > 0 ? patientId : null;
+    outSampleId = null;
+  } else {
+    outPatientId = Number.isFinite(patientId) && patientId > 0 ? patientId : null;
+    outSampleId = Number.isFinite(sampleId) && sampleId > 0 ? sampleId : null;
   }
-  return {
+
+  const baseBody: SaveOrderBody = {
     orderType,
-    laboratoryId,
-    patientId: mode.isObjectOrder ? null : Number.isFinite(patientId) ? patientId : null,
-    sampleId: mode.isHumanOrder ? null : Number.isFinite(sampleId) ? sampleId : null,
+    patientId: outPatientId,
+    sampleId: outSampleId,
     paymentType,
     paymentStatus,
     details,
   };
+
+  // SAN_MINIMUM uchun kurs va umumiy chegirma, sanMinimumId ni ham biriktiramiz
+  if (mode.isSanMinimumOrder) {
+    const courseId = Number(f.laboratoryId);
+    if (Number.isFinite(courseId) && courseId > 0) {
+      (baseBody as SaveOrderBody).courseId = courseId;
+    }
+    if (sanMinimumId !== undefined) {
+      (baseBody as SaveOrderBody).sanMinimumId = sanMinimumId;
+    }
+    if (rootDiscountPercent !== undefined) {
+      (baseBody as SaveOrderBody).discountPercent = rootDiscountPercent;
+    }
+  } else if (sanMinimumId !== undefined) {
+    // Boshqa hollarda ham agar sanMinimumId bo‘lsa, yuborib qo‘yamiz
+    (baseBody as SaveOrderBody).sanMinimumId = sanMinimumId;
+  }
+
+  return baseBody;
 }
 
 export default function CashierOrdersTab() {
@@ -263,9 +367,15 @@ export default function CashierOrdersTab() {
   const [loadingPrices, setLoadingPrices] = useState(true);
   const [laboratories, setLaboratories] = useState<LaboratoryDto[]>([]);
   const [loadingLaboratories, setLoadingLaboratories] = useState(true);
+  const [courses, setCourses] = useState<CourseDto[]>([]);
+  const [loadingCourses, setLoadingCourses] = useState(true);
+  const [coursePrice, setCoursePrice] = useState<CoursePriceDto | null>(null);
+  const [loadingCoursePrice, setLoadingCoursePrice] = useState(false);
   const [patients, setPatients] = useState<PatientDto[]>([]);
   const [samples, setSamples] = useState<SampleDto[]>([]);
   const [loadingPickerLists, setLoadingPickerLists] = useState(true);
+  const [sanMinimums, setSanMinimums] = useState<SanMinimumDto[]>([]);
+  const [loadingSanMinimums, setLoadingSanMinimums] = useState(false);
 
   const [orders, setOrders] = useState<OrderDto[]>([]);
   const [orderPage, setOrderPage] = useState(0);
@@ -391,8 +501,27 @@ export default function CashierOrdersTab() {
 
   useEffect(() => {
     let cancelled = false;
+    setLoadingCourses(true);
+    fetchActiveCourses()
+      .then((rows) => {
+        if (!cancelled) setCourses(rows);
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : "Kurslar yuklanmadi"))
+      .finally(() => {
+        if (!cancelled) setLoadingCourses(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     setLoadingPickerLists(true);
-    Promise.all([fetchPatients(0, PICKER_LIST_SIZE), fetchSamples(0, PICKER_LIST_SIZE)])
+    Promise.all([
+      fetchPatients(0, PICKER_LIST_SIZE, PATIENTS_QUERY_FOR_ORDER),
+      fetchSamples(0, PICKER_LIST_SIZE),
+    ])
       .then(([p, s]) => {
         if (!cancelled) {
           setPatients(p.items);
@@ -426,10 +555,16 @@ export default function CashierOrdersTab() {
     Number.isFinite(Number(form.laboratoryId)) &&
     Number(form.laboratoryId) > 0 &&
     !laboratoryIdsInList.has(Number(form.laboratoryId));
+  const courseIdsInList = useMemo(() => new Set(courses.map((c) => c.id)), [courses]);
+  const showOrphanCourse =
+    form.laboratoryId !== "" &&
+    Number.isFinite(Number(form.laboratoryId)) &&
+    Number(form.laboratoryId) > 0 &&
+    !courseIdsInList.has(Number(form.laboratoryId));
   const patientNameById = useMemo(() => {
     const m = new Map<number, string>();
     patients.forEach((p) => {
-      const full = [p.firstName, p.lastName].filter(Boolean).join(" ").trim();
+      const full = [p.firstName, p.lastName, p.surname].filter(Boolean).join(" ").trim();
       m.set(p.id, full || `Bemor #${p.id}`);
     });
     return m;
@@ -457,6 +592,20 @@ export default function CashierOrdersTab() {
   }, [enums, form.orderType]);
   const isHumanOrder = selectedOrderTypeName === "HUMAN";
   const isObjectOrder = selectedOrderTypeName === "OBJECT";
+  const isSanMinimumOrder = selectedOrderTypeName === "SAN_MINIMUM";
+  const selectedLaboratory = useMemo(() => {
+    const n = Number(form.laboratoryId);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return laboratories.find((l) => l.id === n) ?? null;
+  }, [laboratories, form.laboratoryId]);
+  const useSanMinimumPicker = isSanMinimumOrder;
+  const sanMinimumIdsInList = useMemo(() => new Set(sanMinimums.map((m) => m.id)), [sanMinimums]);
+  const showOrphanSanMinimum =
+    useSanMinimumPicker &&
+    form.patientId !== "" &&
+    Number.isFinite(Number(form.patientId)) &&
+    Number(form.patientId) > 0 &&
+    !sanMinimumIdsInList.has(Number(form.patientId));
   const selectedLaboratoryId = useMemo(() => {
     const n = Number(form.laboratoryId);
     return Number.isFinite(n) && n > 0 ? n : null;
@@ -465,6 +614,36 @@ export default function CashierOrdersTab() {
     if (!selectedLaboratoryId) return [];
     return analyses.filter((a) => Number(a.laboratoryId) === selectedLaboratoryId);
   }, [analyses, selectedLaboratoryId]);
+  useEffect(() => {
+    // SAN_MINIMUM + kurs tanlanganda kurs narxini olish
+    if (!dialogOpen || !isSanMinimumOrder) {
+      setCoursePrice(null);
+      return;
+    }
+    const courseId = Number(form.laboratoryId);
+    if (!Number.isFinite(courseId) || courseId <= 0) {
+      setCoursePrice(null);
+      return;
+    }
+    let cancelled = false;
+    setLoadingCoursePrice(true);
+    fetchCoursePrice(courseId)
+      .then((p) => {
+        if (!cancelled) setCoursePrice(p);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setCoursePrice(null);
+          toast.error(e instanceof Error ? e.message : "Kurs narxi yuklanmadi");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCoursePrice(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dialogOpen, isSanMinimumOrder, form.laboratoryId]);
   const priceByAnalysisId = useMemo(() => {
     const m = new Map<number, number>();
     for (const p of analysisPrices) {
@@ -475,6 +654,23 @@ export default function CashierOrdersTab() {
   const money = (n: number) =>
     new Intl.NumberFormat("uz-UZ", { maximumFractionDigits: 0 }).format(Math.max(0, n));
   const amountSummary = useMemo(() => {
+    // SAN_MINIMUM uchun course narxiga asoslangan hisob
+    if (isSanMinimumOrder && coursePrice) {
+      const row = form.details[0] ?? emptyDetailRow();
+      const qtyRaw = Number(row.quantity);
+      const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? qtyRaw : 1;
+      const pctRaw = Number(row.discountPercent);
+      const pct = Math.min(100, Math.max(0, Number.isFinite(pctRaw) ? pctRaw : 0));
+      const subTotal = coursePrice.price * qty;
+      const discountTotal = Math.round((subTotal * pct) / 100);
+      return {
+        subTotal,
+        discountTotal,
+        total: Math.max(0, subTotal - discountTotal),
+        missingPriceCount: 0,
+      };
+    }
+
     let subTotal = 0;
     let discountTotal = 0;
     let missingPriceCount = 0;
@@ -499,17 +695,42 @@ export default function CashierOrdersTab() {
       total: Math.max(0, subTotal - discountTotal),
       missingPriceCount,
     };
-  }, [form.details, priceByAnalysisId]);
+  }, [form.details, priceByAnalysisId, isSanMinimumOrder, coursePrice]);
 
   useEffect(() => {
-    if (isHumanOrder && form.sampleId !== "") {
+    if ((isHumanOrder || isSanMinimumOrder) && form.sampleId !== "") {
       setForm((prev) => ({ ...prev, sampleId: "" }));
       return;
     }
     if (isObjectOrder && form.patientId !== "") {
       setForm((prev) => ({ ...prev, patientId: "" }));
     }
-  }, [isHumanOrder, isObjectOrder, form.sampleId, form.patientId]);
+  }, [isHumanOrder, isObjectOrder, isSanMinimumOrder, form.sampleId, form.patientId]);
+
+  useEffect(() => {
+    if (!dialogOpen || !useSanMinimumPicker) {
+      setSanMinimums([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingSanMinimums(true);
+    fetchSanMinimums(0, PICKER_LIST_SIZE)
+      .then((p) => {
+        if (!cancelled) setSanMinimums(p.items);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setSanMinimums([]);
+          toast.error(e instanceof Error ? e.message : "San minimumlar yuklanmadi");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSanMinimums(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dialogOpen, useSanMinimumPicker]);
 
   const loadOrders = useCallback(async () => {
     setLoadingOrders(true);
@@ -563,7 +784,11 @@ export default function CashierOrdersTab() {
   };
 
   const handleSave = async () => {
-    const body = formToBody(form, { isHumanOrder, isObjectOrder }, priceByAnalysisId);
+    const body = formToBody(
+      form,
+      { isHumanOrder, isObjectOrder, isSanMinimumOrder, useSanMinimumPicker },
+      priceByAnalysisId
+    );
     if (!body) return;
     setSaving(true);
     try {
@@ -602,25 +827,19 @@ export default function CashierOrdersTab() {
   return (
     <Card>
       <CardHeader>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle>Buyurtmalar</CardTitle>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end">
+          <div className="flex flex-wrap gap-2">
+            <AntButton
+              icon={<Filter className="h-4 w-4" />}
               className="shrink-0"
               onClick={() => setFiltersOpen((v) => !v)}
               disabled={loadingEnums}
             >
-              <Filter className="h-4 w-4 mr-2" />
               Filterlash
-            </Button>
-            <Button className="bg-blue-600 hover:bg-blue-700 shrink-0" onClick={openCreate} disabled={loadingEnums}>
-              <Plus className="h-4 w-4 mr-2" />
+            </AntButton>
+            <AntButton type="primary" icon={<Plus className="h-4 w-4" />} className="shrink-0" onClick={openCreate} disabled={loadingEnums}>
               Buyurtma yaratish
-            </Button>
+            </AntButton>
           </div>
         </div>
       </CardHeader>
@@ -794,7 +1013,7 @@ export default function CashierOrdersTab() {
                           enums?.orderTypes.find((x) => x.value === o.orderType)?.name?.toUpperCase() ?? "";
                         const rowIsHuman = orderTypeName === "HUMAN";
                         const rowIsObject = orderTypeName === "OBJECT";
-                        const patient = patients.find((p) => p.id === o.patientId);
+                        const rowIsSanMinimum = orderTypeName === "SAN_MINIMUM";
                         return (
                           <>
                             <TableCell className="font-mono text-sm tabular-nums">
@@ -809,6 +1028,14 @@ export default function CashierOrdersTab() {
                               <TableCell className="text-sm">
                                 {sampleNameById.get(o.sampleId) ?? `Namuna #${o.sampleId}`}
                               </TableCell>
+                            )}
+                            {rowIsSanMinimum && (
+                              <TableCell className="text-sm max-w-[240px] truncate" title={sanMinimumOrderDisplayName(o)}>
+                                {sanMinimumOrderDisplayName(o)}
+                              </TableCell>
+                            )}
+                            {!rowIsHuman && !rowIsObject && !rowIsSanMinimum && (
+                              <TableCell className="text-sm text-muted-foreground">—</TableCell>
                             )}
 
                             <TableCell className="text-sm font-semibold tabular-nums">
@@ -846,12 +1073,17 @@ export default function CashierOrdersTab() {
                               })()}
                             </TableCell>
                             <TableCell className="text-sm">
-                              {/* bu yerda agarda human bolsa phoneNumber ko'rsatish kerak */}
                               {rowIsHuman && (
-                                <span className="text-sm">{patient?.phoneNumber ?? "—"}</span>
+                                <span className="text-sm">{o.patientPhoneNumber ?? "—"}</span>
                               )}
                               {rowIsObject && (
                                 <span className="text-sm">-</span>
+                              )}
+                              {rowIsSanMinimum && (
+                                <span className="text-sm">{o.sanMinimumPhoneNumber ?? "—"}</span>
+                              )}
+                              {!rowIsHuman && !rowIsObject && !rowIsSanMinimum && (
+                                <span className="text-sm">—</span>
                               )}
                             </TableCell>
                             <TableCell className="text-sm">
@@ -1136,263 +1368,414 @@ export default function CashierOrdersTab() {
           </DialogContent>
         </Dialog>
 
-        <Dialog
+        <Modal
+          title={editingId != null ? "Buyurtmani tahrirlash" : "Yangi buyurtma"}
           open={dialogOpen}
-          onOpenChange={(open) => {
-            setDialogOpen(open);
-            if (!open) setEditingId(null);
+          onCancel={() => {
+            setDialogOpen(false);
+            setEditingId(null);
           }}
+          width={800}
+          destroyOnClose
+          styles={{ body: { maxHeight: "min(90vh, 720px)", overflowY: "auto" } }}
+          footer={
+            <Space>
+              <AntButton
+                onClick={() => {
+                  setDialogOpen(false);
+                  setEditingId(null);
+                }}
+                disabled={saving}
+              >
+                Bekor qilish
+              </AntButton>
+              <AntButton type="primary" loading={saving} onClick={() => void handleSave()}>
+                Saqlash
+              </AntButton>
+            </Space>
+          }
         >
-          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg md:max-w-xl">
-            <DialogHeader>
-              <DialogTitle>{editingId != null ? "Buyurtmani tahrirlash" : "Yangi buyurtma"}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
+          <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>Buyurtma turi</Label>
-                  <Select value={form.orderType} onValueChange={(v) => setForm({ ...form, orderType: v })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingEnums ? "…" : "Tanlang"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(enums?.orderTypes ?? []).map((e) => (
-                        <SelectItem key={e.value} value={String(e.value)}>
-                          {enumEntryDisplayLabel(e)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <div className="flex flex-col gap-1">
+                  <Typography.Text>Buyurtma turi</Typography.Text>
+                  <AntSelect
+                    className="w-full"
+                    placeholder={loadingEnums ? "…" : "Tanlang"}
+                    loading={loadingEnums}
+                    disabled={loadingEnums}
+                    value={form.orderType || undefined}
+                    onChange={(v) => setForm({ ...form, orderType: v ?? "" })}
+                    options={(enums?.orderTypes ?? []).map((e) => ({
+                      value: String(e.value),
+                      label: enumEntryDisplayLabel(e),
+                    }))}
+                    showSearch
+                    optionFilterProp="label"
+                  />
                 </div>
 
-                <div className="space-y-2">
-                  <Label>To‘lov turi</Label>
-                  <Select value={form.paymentType} onValueChange={(v) => setForm({ ...form, paymentType: v })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Tanlang" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(enums?.paymentTypes ?? []).map((e) => (
-                        <SelectItem key={e.value} value={String(e.value)}>
-                          {enumEntryDisplayLabel(e)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <div className="flex flex-col gap-1">
+                  <Typography.Text>To‘lov turi</Typography.Text>
+                  <AntSelect
+                    className="w-full"
+                    placeholder="Tanlang"
+                    value={form.paymentType || undefined}
+                    onChange={(v) => setForm({ ...form, paymentType: v ?? "" })}
+                    options={(enums?.paymentTypes ?? []).map((e) => ({
+                      value: String(e.value),
+                      label: enumEntryDisplayLabel(e),
+                    }))}
+                    showSearch
+                    optionFilterProp="label"
+                  />
                 </div>
-                <div className="space-y-2">
-                  <Label>To‘lov holati</Label>
-                  <Select
-                    value={form.paymentStatus}
-                    onValueChange={(v) => setForm({ ...form, paymentStatus: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Tanlang" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(enums?.paymentStatuses ?? []).map((e) => (
-                        <SelectItem key={e.value} value={String(e.value)}>
-                          {enumEntryDisplayLabel(e)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <div className="flex flex-col gap-1">
+                  <Typography.Text>To‘lov holati</Typography.Text>
+                  <AntSelect
+                    className="w-full"
+                    placeholder="Tanlang"
+                    value={form.paymentStatus || undefined}
+                    onChange={(v) => setForm({ ...form, paymentStatus: v ?? "" })}
+                    options={(enums?.paymentStatuses ?? []).map((e) => ({
+                      value: String(e.value),
+                      label: enumEntryDisplayLabel(e),
+                    }))}
+                    showSearch
+                    optionFilterProp="label"
+                  />
                 </div>
-                <div className="space-y-2">
-                  {!isObjectOrder && (
-                    <div className="space-y-2">
-                      <Label>Bemor</Label>
-                      <Select value={form.patientId} onValueChange={(v) => setForm({ ...form, patientId: v })} disabled={loadingPickerLists}>
-                        <SelectTrigger>
-                          <SelectValue placeholder={loadingPickerLists ? "Yuklanmoqda…" : "Tanlang"} />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-[min(60vh,320px)]">
-                          {showOrphanPatient && (
-                            <SelectItem value={form.patientId}>Bemor #{form.patientId} (ro‘yxatda yo‘q)</SelectItem>
-                          )}
-                          {patients.map((p) => (
-                            <SelectItem key={p.id} value={String(p.id)}>
-                              {patientPickerLabel(p)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                <div className="flex flex-col gap-1">
+                  <Typography.Text>{isSanMinimumOrder ? "Kurs" : "Laboratoriya"}</Typography.Text>
+                  {isSanMinimumOrder ? (
+                    <AntSelect
+                      className="w-full"
+                      placeholder={loadingCourses ? "Yuklanmoqda…" : "Tanlang"}
+                      loading={loadingCourses}
+                      disabled={loadingCourses}
+                      value={form.laboratoryId || undefined}
+                      onChange={(v) => setForm((prev) => ({ ...prev, laboratoryId: v ?? "" }))}
+                      options={[
+                        ...(showOrphanCourse
+                          ? [
+                              {
+                                value: form.laboratoryId,
+                                label: `Kurs #${form.laboratoryId} (ro‘yxatda yo‘q)`,
+                              },
+                            ]
+                          : []),
+                        ...courses.map((c) => ({
+                          value: String(c.id),
+                          label: c.name || `Kurs #${c.id}`,
+                        })),
+                      ]}
+                      showSearch
+                      optionFilterProp="label"
+                      listHeight={320}
+                    />
+                  ) : (
+                    <AntSelect
+                      className="w-full"
+                      placeholder={loadingLaboratories ? "Yuklanmoqda…" : "Tanlang"}
+                      loading={loadingLaboratories}
+                      disabled={loadingLaboratories}
+                      value={form.laboratoryId || undefined}
+                      onChange={(v) => setForm((prev) => ({ ...prev, laboratoryId: v ?? "" }))}
+                      options={[
+                        ...(showOrphanLaboratory
+                          ? [
+                              {
+                                value: form.laboratoryId,
+                                label: `Laboratoriya #${form.laboratoryId} (ro‘yxatda yo‘q)`,
+                              },
+                            ]
+                          : []),
+                        ...laboratories.map((l) => ({
+                          value: String(l.id),
+                          label: l.nameUz || l.nameRu || `Laboratoriya #${l.id}`,
+                        })),
+                      ]}
+                      showSearch
+                      optionFilterProp="label"
+                      listHeight={320}
+                    />
                   )}
-                  {!isHumanOrder && (
-                    <div className="space-y-2">
-                      <Label>Namuna</Label>
-                      <Select value={form.sampleId} onValueChange={(v) => setForm({ ...form, sampleId: v })} disabled={loadingPickerLists}>
-                        <SelectTrigger>
-                          <SelectValue placeholder={loadingPickerLists ? "Yuklanmoqda…" : "Tanlang"} />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-[min(60vh,320px)]">
-                          {showOrphanSample && (
-                            <SelectItem value={form.sampleId}>Namuna #{form.sampleId} (ro‘yxatda yo‘q)</SelectItem>
-                          )}
-                          {samples.map((s) => (
-                            <SelectItem key={s.id} value={String(s.id)}>
-                              {samplePickerLabel(s)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
                 </div>
-                <div className="space-y-2">
-                  <Label>Laboratoriya</Label>
-                  <Select
-                    value={form.laboratoryId}
-                    onValueChange={(v) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        laboratoryId: v,
-                        details: prev.details.map((d) => ({ ...d, analysisId: "" })),
-                      }))
-                    }
-                    disabled={loadingLaboratories}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingLaboratories ? "Yuklanmoqda…" : "Tanlang"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {showOrphanLaboratory && (
-                        <SelectItem value={form.laboratoryId}>
-                          Laboratoriya #{form.laboratoryId} (ro‘yxatda yo‘q)
-                        </SelectItem>
+                <div className="flex flex-col gap-1">
+                  {useSanMinimumPicker ? (
+                    <div className="flex flex-col gap-1">
+                      <Typography.Text>San minimum</Typography.Text>
+                      <AntSelect
+                        className="w-full"
+                        placeholder={loadingSanMinimums ? "Yuklanmoqda…" : "Tanlang"}
+                        loading={loadingSanMinimums}
+                        disabled={loadingSanMinimums}
+                        value={form.patientId || undefined}
+                        onChange={(v) => setForm({ ...form, patientId: v ?? "" })}
+                        options={[
+                          ...(showOrphanSanMinimum
+                            ? [
+                                {
+                                  value: form.patientId,
+                                  label: `San minimum #${form.patientId} (ro‘yxatda yo‘q)`,
+                                },
+                              ]
+                            : []),
+                          ...sanMinimums.map((m) => ({
+                            value: String(m.id),
+                            label: sanMinimumPickerLabel(m),
+                          })),
+                        ]}
+                        showSearch
+                        optionFilterProp="label"
+                        listHeight={320}
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      {!isObjectOrder && (
+                        <div className="flex flex-col gap-1">
+                          {/* Ro‘yxat: `PATIENTS_QUERY_FOR_ORDER` → GET /patients?availableForOrder=true */}
+                          <Typography.Text>Bemor</Typography.Text>
+                          <AntSelect
+                            className="w-full"
+                            placeholder={loadingPickerLists ? "Yuklanmoqda…" : "Tanlang"}
+                            loading={loadingPickerLists}
+                            disabled={loadingPickerLists}
+                            value={form.patientId || undefined}
+                            onChange={(v) => setForm({ ...form, patientId: v ?? "" })}
+                            options={[
+                              ...(showOrphanPatient
+                                ? [
+                                    {
+                                      value: form.patientId,
+                                      label: `Bemor #${form.patientId} (ro‘yxatda yo‘q)`,
+                                    },
+                                  ]
+                                : []),
+                              ...patients.map((p) => ({
+                                value: String(p.id),
+                                label: patientPickerLabel(p),
+                              })),
+                            ]}
+                            showSearch
+                            optionFilterProp="label"
+                            listHeight={320}
+                          />
+                        </div>
                       )}
-                      {laboratories.map((l) => (
-                        <SelectItem key={l.id} value={String(l.id)}>
-                          {l.nameUz || l.nameRu || `Laboratoriya #${l.id}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                      {!isHumanOrder && !isSanMinimumOrder && (
+                        <div className="flex flex-col gap-1">
+                          <Typography.Text>Namuna</Typography.Text>
+                          <AntSelect
+                            className="w-full"
+                            placeholder={loadingPickerLists ? "Yuklanmoqda…" : "Tanlang"}
+                            loading={loadingPickerLists}
+                            disabled={loadingPickerLists}
+                            value={form.sampleId || undefined}
+                            onChange={(v) => setForm({ ...form, sampleId: v ?? "" })}
+                            options={[
+                              ...(showOrphanSample
+                                ? [
+                                    {
+                                      value: form.sampleId,
+                                      label: `Namuna #${form.sampleId} (ro‘yxatda yo‘q)`,
+                                    },
+                                  ]
+                                : []),
+                              ...samples.map((s) => ({
+                                value: String(s.id),
+                                label: samplePickerLabel(s),
+                              })),
+                            ]}
+                            showSearch
+                            optionFilterProp="label"
+                            listHeight={320}
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
 
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>Tahlil qatorlari (details)</Label>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setForm({ ...form, details: [...form.details, emptyDetailRow()] })}
-                  >
-                    <Plus className="h-4 w-4 mr-1" />
-                    Qator
-                  </Button>
-                </div>
-                <div className="space-y-3 rounded-lg border p-3">
-                  {form.details.map((row, idx) => {
-                    const aid = Number(row.analysisId);
-                    const analysisInSelectedLab =
-                      Number.isFinite(aid) &&
-                      aid > 0 &&
-                      analysesForSelectedLab.some((a) => a.id === aid);
-                    const showOrphanAnalysis =
-                      Number.isFinite(aid) && aid > 0 && !analysisInSelectedLab;
-                    return (
-                    <div key={idx} className="grid grid-cols-1 gap-2 sm:grid-cols-12 sm:items-end">
-                      <div className="sm:col-span-5 space-y-1">
-                        <Label className="text-xs">Tahlil</Label>
-                        <Select
-                          value={row.analysisId}
-                          onValueChange={(v) => {
-                            const next = [...form.details];
-                            next[idx] = { ...next[idx], analysisId: v };
-                            setForm({ ...form, details: next });
-                          }}
-                          disabled={!selectedLaboratoryId || loadingAnalyses}
-                        >
-                          <SelectTrigger>
-                            <SelectValue
-                              placeholder={
-                                !selectedLaboratoryId
-                                  ? "Avval laboratoriyani tanlang"
-                                  : loadingAnalyses
-                                    ? "…"
-                                    : "Tanlang"
-                              }
-                            />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {showOrphanAnalysis && (
-                              <SelectItem value={row.analysisId}>
-                                {analysisNameById.get(aid) ?? `Tahlil #${aid}`} (boshqa lab / ro‘yxatda yo‘q)
-                              </SelectItem>
-                            )}
-                            {analysesForSelectedLab.map((a) => (
-                              <SelectItem key={a.id} value={String(a.id)}>
-                                {a.nameUz}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="sm:col-span-3 space-y-1">
-                        <Label className="text-xs">Chegirma (%)</Label>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={0.01}
-                          inputMode="decimal"
-                          value={row.discountPercent}
-                          onChange={(e) => {
-                            const next = [...form.details];
-                            next[idx] = { ...next[idx], discountPercent: e.target.value };
-                            setForm({ ...form, details: next });
-                          }}
-                        />
-                      </div>
-                      <div className="sm:col-span-3 space-y-1">
-                        <Label className="text-xs">Miqdor</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          value={row.quantity}
-                          onChange={(e) => {
-                            const next = [...form.details];
-                            next[idx] = { ...next[idx], quantity: e.target.value };
-                            setForm({ ...form, details: next });
-                          }}
-                        />
-                      </div>
-                      <div className="sm:col-span-1 flex sm:justify-end">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive"
-                          disabled={form.details.length <= 1}
-                          onClick={() => {
-                            const next = form.details.filter((_, i) => i !== idx);
-                            setForm({ ...form, details: next.length ? next : [emptyDetailRow()] });
-                          }}
-                          aria-label="Qatorni o‘chirish"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                {isSanMinimumOrder ? (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <Typography.Text strong>Kurs bo‘yicha hisob</Typography.Text>
+                    </div>
+                    <div className="space-y-3 rounded-lg border p-3">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-12 sm:items-end">
+                        <div className="sm:col-span-6 space-y-1">
+                          <Typography.Text type="secondary" className="text-xs">
+                            Kurs
+                          </Typography.Text>
+                          <p className="text-sm font-medium">
+                            {loadingCoursePrice
+                              ? "Yuklanmoqda…"
+                              : coursePrice
+                                ? coursePrice.courseName || `Kurs #${coursePrice.courseId}`
+                                : "Kurs tanlanmagan yoki narx topilmadi"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Narx:{" "}
+                            {coursePrice ? money(coursePrice.price) : loadingCoursePrice ? "…" : "—"}
+                          </p>
+                        </div>
+                        <div className="sm:col-span-3 space-y-1">
+                          <Typography.Text type="secondary" className="text-xs">
+                            Chegirma (%)
+                          </Typography.Text>
+                          <AntInput
+                            className="w-full"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.01}
+                            inputMode="decimal"
+                            value={form.details[0]?.discountPercent ?? "0"}
+                            onChange={(e) => {
+                              const next = [...form.details];
+                              const row = next[0] ?? emptyDetailRow();
+                              next[0] = { ...row, discountPercent: e.target.value };
+                              setForm({ ...form, details: next });
+                            }}
+                          />
+                        </div>
                       </div>
                     </div>
-                  );
-                  })}
-                </div>
-                {selectedLaboratoryId && analysesForSelectedLab.length === 0 && !loadingAnalyses && (
-                  <p className="text-xs text-muted-foreground">
-                    Tanlangan laboratoriyada tahlillar topilmadi.
-                  </p>
-                )}
-                {!loadingPrices && amountSummary.missingPriceCount > 0 && (
-                  <p className="text-xs text-amber-600">
-                    {amountSummary.missingPriceCount} ta tahlil uchun narx topilmadi, summaga qo‘shilmadi.
-                  </p>
-                )}
-                {analyses.length === 0 && !loadingAnalyses && (
-                  <p className="text-xs text-muted-foreground">Tahlillar ro‘yxati bo‘sh (GET /analyses/admin).</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <Typography.Text strong>Tahlil qatorlari (details)</Typography.Text>
+                      <AntButton
+                        type="default"
+                        size="small"
+                        icon={<Plus className="h-4 w-4" />}
+                        onClick={() => setForm({ ...form, details: [...form.details, emptyDetailRow()] })}
+                      >
+                        Qator
+                      </AntButton>
+                    </div>
+                    <div className="space-y-3 rounded-lg border p-3">
+                      {form.details.map((row, idx) => {
+                        const aid = Number(row.analysisId);
+                        const analysisInSelectedLab =
+                          Number.isFinite(aid) &&
+                          aid > 0 &&
+                          analysesForSelectedLab.some((a) => a.id === aid);
+                        const showOrphanAnalysis =
+                          Number.isFinite(aid) && aid > 0 && !analysisInSelectedLab;
+                        return (
+                          <div key={idx} className="grid grid-cols-1 gap-2 sm:grid-cols-12 sm:items-end">
+                            <div className="sm:col-span-5 space-y-1">
+                              <Typography.Text type="secondary" className="text-xs">
+                                Tahlil
+                              </Typography.Text>
+                              <AntSelect
+                                className="w-full"
+                                placeholder={
+                                  !selectedLaboratoryId
+                                    ? "Avval laboratoriyani tanlang"
+                                    : loadingAnalyses
+                                      ? "…"
+                                      : "Tanlang"
+                                }
+                                loading={loadingAnalyses}
+                                disabled={!selectedLaboratoryId || loadingAnalyses}
+                                value={row.analysisId || undefined}
+                                onChange={(v) => {
+                                  const next = [...form.details];
+                                  next[idx] = { ...next[idx], analysisId: v ?? "" };
+                                  setForm({ ...form, details: next });
+                                }}
+                                options={[
+                                  ...(showOrphanAnalysis
+                                    ? [
+                                        {
+                                          value: row.analysisId,
+                                          label: `${analysisNameById.get(aid) ?? `Tahlil #${aid}`} (boshqa lab / ro‘yxatda yo‘q)`,
+                                        },
+                                      ]
+                                    : []),
+                                  ...analysesForSelectedLab.map((a) => ({
+                                    value: String(a.id),
+                                    label: a.nameUz,
+                                  })),
+                                ]}
+                                showSearch
+                                optionFilterProp="label"
+                                listHeight={280}
+                              />
+                            </div>
+                            <div className="sm:col-span-3 space-y-1">
+                              <Typography.Text type="secondary" className="text-xs">
+                                Chegirma (%)
+                              </Typography.Text>
+                              <AntInput
+                                className="w-full"
+                                type="number"
+                                min={0}
+                                max={100}
+                                step={0.01}
+                                inputMode="decimal"
+                                value={row.discountPercent}
+                                onChange={(e) => {
+                                  const next = [...form.details];
+                                  next[idx] = { ...next[idx], discountPercent: e.target.value };
+                                  setForm({ ...form, details: next });
+                                }}
+                              />
+                            </div>
+                            <div className="sm:col-span-3 space-y-1">
+                              <Typography.Text type="secondary" className="text-xs">
+                                Miqdor
+                              </Typography.Text>
+                              <AntInput
+                                className="w-full"
+                                type="number"
+                                min={1}
+                                value={row.quantity}
+                                onChange={(e) => {
+                                  const next = [...form.details];
+                                  next[idx] = { ...next[idx], quantity: e.target.value };
+                                  setForm({ ...form, details: next });
+                                }}
+                              />
+                            </div>
+                            <div className="sm:col-span-1 flex sm:justify-end">
+                              <AntButton
+                                type="text"
+                                danger
+                                disabled={form.details.length <= 1}
+                                onClick={() => {
+                                  const next = form.details.filter((_, i) => i !== idx);
+                                  setForm({ ...form, details: next.length ? next : [emptyDetailRow()] });
+                                }}
+                                aria-label="Qatorni o‘chirish"
+                                icon={<Trash2 className="h-4 w-4" />}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {selectedLaboratoryId && analysesForSelectedLab.length === 0 && !loadingAnalyses && (
+                      <p className="text-xs text-muted-foreground">
+                        Tanlangan laboratoriyada tahlillar topilmadi.
+                      </p>
+                    )}
+                    {!loadingPrices && amountSummary.missingPriceCount > 0 && (
+                      <p className="text-xs text-amber-600">
+                        {amountSummary.missingPriceCount} ta tahlil uchun narx topilmadi, summaga qo‘shilmadi.
+                      </p>
+                    )}
+                    {analyses.length === 0 && !loadingAnalyses && (
+                      <p className="text-xs text-muted-foreground">Tahlillar ro‘yxati bo‘sh (GET /analyses/admin).</p>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -1410,18 +1793,8 @@ export default function CashierOrdersTab() {
                   <span>{money(amountSummary.total)}</span>
                 </div>
               </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
-                  Bekor qilish
-                </Button>
-                <Button type="button" className="bg-blue-600 hover:bg-blue-700" onClick={() => void handleSave()} disabled={saving}>
-                  {saving ? "Saqlanmoqda…" : "Saqlash"}
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+          </div>
+        </Modal>
 
         <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(o) => !o && setDeleteTarget(null)}>
           <AlertDialogContent>

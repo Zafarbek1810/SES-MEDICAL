@@ -1,32 +1,32 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Edit, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
-import { DatePicker } from "antd";
-import dayjs from "dayjs";
-import { Button } from "../ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
-import { Input } from "../ui/input";
-import { Label } from "../ui/label";
-import { Textarea } from "../ui/textarea";
-import { Switch } from "../ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Plus, Edit, Trash2 } from "lucide-react";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "../ui/alert-dialog";
+  Modal,
+  Input,
+  Select,
+  DatePicker,
+  Button,
+  Card,
+  Table,
+  Pagination,
+  Typography,
+  Space,
+  Switch,
+  InputNumber,
+} from "antd";
+import type { ColumnsType } from "antd/es/table";
+import dayjs from "dayjs";
 import { toast } from "sonner";
 import { formatTableDate } from "../../../utils/tableDateFormat";
 import type { ReferenceItem } from "../../../services/referenceDataApi";
 import { fetchRegions, fetchDistricts, fetchVillages } from "../../../services/referenceDataApi";
 import { fetchWorkplaces, fetchWorkplacesAdmin, type WorkplaceDto } from "../../../services/workplacesApi";
-import { fetchDepartments, type DepartmentDto } from "../../../services/departmentsApi";
+import {
+  fetchSpIndustries,
+  fetchSpPositions,
+  type SpIndustryDto,
+  type SpPositionDto,
+} from "../../../services/spIndustriesPositionsApi";
 import {
   createPatient,
   deletePatient,
@@ -37,11 +37,25 @@ import {
   type SavePatientBody,
 } from "../../../services/patientsApi";
 
+const UZ_PHONE_PREFIX = "+998";
+const PHONE_LOCAL_DIGITS = 9;
+
+/** API / forma: to‘liq raqamdan +998 keyingi 9 ta raqam */
+function parseLocalDigitsFromStored(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.startsWith("998") && digits.length >= 3 + PHONE_LOCAL_DIGITS) {
+    return digits.slice(3, 3 + PHONE_LOCAL_DIGITS);
+  }
+  if (digits.length >= PHONE_LOCAL_DIGITS) {
+    return digits.slice(-PHONE_LOCAL_DIGITS);
+  }
+  return digits.slice(0, PHONE_LOCAL_DIGITS);
+}
+
 function referenceLabel(item: ReferenceItem): string {
   return item.nameUz?.trim() || item.name?.trim() || item.nameRu?.trim() || `#${item.id}`;
 }
 
-/** AdminPanel bilan bir xil — selectlarda lotincha nom (nameLat) */
 function referenceNameLatLabel(item: ReferenceItem): string {
   const o = item as Record<string, unknown>;
   const nameLat =
@@ -53,13 +67,18 @@ function referenceNameLatLabel(item: ReferenceItem): string {
 type PatientFormState = {
   firstName: string;
   lastName: string;
+  surname: string;
   regionId: string;
   districtId: string;
   villageId: string;
   workplaceId: string;
-  departmentId: string;
+  /** UI: GET /sp-industries */
+  spIndustryId: string;
+  /** GET /sp-positions */
+  positionId: string;
   birthDay: string;
-  phoneNumber: string;
+  /** +998 dan keyingi aynan 9 ta raqam (prefiks alohida ko‘rsatiladi) */
+  phoneLocalDigits: string;
   address: string;
   privilege: string;
   comment: string;
@@ -70,13 +89,15 @@ function emptyForm(): PatientFormState {
   return {
     firstName: "",
     lastName: "",
+    surname: "",
     regionId: "",
     districtId: "",
     villageId: "",
     workplaceId: "",
-    departmentId: "0",
+    spIndustryId: "",
+    positionId: "",
     birthDay: "",
-    phoneNumber: "",
+    phoneLocalDigits: "",
     address: "",
     privilege: "0",
     comment: "",
@@ -88,13 +109,15 @@ function patientToForm(p: PatientDto): PatientFormState {
   return {
     firstName: p.firstName,
     lastName: p.lastName,
+    surname: p.surname ?? "",
     regionId: String(p.regionId),
     districtId: String(p.districtId),
     villageId: String(p.villageId),
     workplaceId: String(p.workplaceId),
-    departmentId: String(p.departmentId),
+    spIndustryId: p.positionIndustryId != null && p.positionIndustryId > 0 ? String(p.positionIndustryId) : "",
+    positionId: p.positionId > 0 ? String(p.positionId) : "",
     birthDay: p.birthDay,
-    phoneNumber: p.phoneNumber,
+    phoneLocalDigits: parseLocalDigitsFromStored(p.phoneNumber),
     address: p.address,
     privilege: String(p.privilege),
     comment: p.comment,
@@ -111,7 +134,7 @@ function formToBody(f: PatientFormState): SavePatientBody | null {
   const districtId = Number(f.districtId);
   const villageId = Number(f.villageId);
   const workplaceId = Number(f.workplaceId);
-  const departmentId = Number(f.departmentId);
+  const positionId = Number(f.positionId);
   const privilege = Number(f.privilege);
   if (!Number.isFinite(regionId) || regionId <= 0) {
     toast.error("Viloyatni tanlang");
@@ -129,8 +152,8 @@ function formToBody(f: PatientFormState): SavePatientBody | null {
     toast.error("Ish joyi noto‘g‘ri");
     return null;
   }
-  if (!Number.isFinite(departmentId) || departmentId < 0) {
-    toast.error("Bo‘lim ID noto‘g‘ri");
+  if (!Number.isFinite(positionId) || positionId <= 0) {
+    toast.error("Lavozimni tanlang");
     return null;
   }
   if (!f.birthDay.trim()) {
@@ -141,16 +164,22 @@ function formToBody(f: PatientFormState): SavePatientBody | null {
     toast.error("Imtiyoz qiymati noto‘g‘ri");
     return null;
   }
+  const phoneDigits = f.phoneLocalDigits.replace(/\D/g, "");
+  if (phoneDigits.length !== PHONE_LOCAL_DIGITS) {
+    toast.error(`Telefon: +998 dan keyin aynan ${PHONE_LOCAL_DIGITS} ta raqam kiriting`);
+    return null;
+  }
   return {
     firstName: f.firstName.trim(),
     lastName: f.lastName.trim(),
+    surname: f.surname.trim(),
     regionId,
     districtId,
     villageId,
     workplaceId,
-    departmentId,
+    positionId,
     birthDay: f.birthDay.trim(),
-    phoneNumber: f.phoneNumber.trim(),
+    phoneNumber: `${UZ_PHONE_PREFIX}${phoneDigits}`,
     address: f.address.trim(),
     privilege,
     comment: f.comment.trim(),
@@ -162,7 +191,6 @@ export default function CashierPatientsTab() {
   const [patients, setPatients] = useState<PatientDto[]>([]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(10);
-  const [totalPages, setTotalPages] = useState(1);
   const [totalElements, setTotalElements] = useState(0);
   const [loadingList, setLoadingList] = useState(false);
 
@@ -170,7 +198,9 @@ export default function CashierPatientsTab() {
   const [districts, setDistricts] = useState<ReferenceItem[]>([]);
   const [villages, setVillages] = useState<ReferenceItem[]>([]);
   const [workplaces, setWorkplaces] = useState<WorkplaceDto[]>([]);
-  const [departments, setDepartments] = useState<DepartmentDto[]>([]);
+  const [spIndustries, setSpIndustries] = useState<SpIndustryDto[]>([]);
+  const [spPositions, setSpPositions] = useState<SpPositionDto[]>([]);
+  const [loadingSpPositions, setLoadingSpPositions] = useState(false);
   const [loadingRef, setLoadingRef] = useState(true);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -193,12 +223,12 @@ export default function CashierPatientsTab() {
   const showOrphanWorkplace =
     Number.isFinite(orphanWorkplaceId) && orphanWorkplaceId > 0 && !workplaceSelectIds.has(orphanWorkplaceId);
 
-  const departmentSelectIds = useMemo(() => new Set(departments.map((d) => d.id)), [departments]);
-  const orphanDepartmentId = Number(form.departmentId);
-  const showOrphanDepartment =
-    Number.isFinite(orphanDepartmentId) &&
-    orphanDepartmentId > 0 &&
-    !departmentSelectIds.has(orphanDepartmentId);
+  const positionSelectIds = useMemo(() => new Set(spPositions.map((p) => p.id)), [spPositions]);
+  const orphanPositionId = Number(form.positionId);
+  const showOrphanPosition =
+    Number.isFinite(orphanPositionId) &&
+    orphanPositionId > 0 &&
+    !positionSelectIds.has(orphanPositionId);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,13 +236,13 @@ export default function CashierPatientsTab() {
     Promise.all([
       fetchRegions(),
       fetchWorkplacesAdmin().catch(() => fetchWorkplaces()),
-      fetchDepartments(),
+      fetchSpIndustries().catch(() => []),
     ])
-      .then(([r, w, d]) => {
+      .then(([r, w, ind]) => {
         if (!cancelled) {
           setRegions(r);
           setWorkplaces(w);
-          setDepartments(d);
+          setSpIndustries(ind);
         }
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : "Ma’lumotlar yuklanmadi"))
@@ -270,12 +300,34 @@ export default function CashierPatientsTab() {
     };
   }, [form.districtId]);
 
+  useEffect(() => {
+    const iid = Number(form.spIndustryId);
+    if (!Number.isFinite(iid) || iid <= 0) {
+      setSpPositions([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingSpPositions(true);
+    fetchSpPositions(iid)
+      .then((rows) => {
+        if (!cancelled) setSpPositions(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setSpPositions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSpPositions(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.spIndustryId]);
+
   const loadPatients = useCallback(async () => {
     setLoadingList(true);
     try {
       const p = await fetchPatients(page, pageSize);
       setPatients(p.items);
-      setTotalPages(Math.max(1, p.totalPages));
       setTotalElements(p.totalElements);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Bemorlar yuklanmadi");
@@ -295,10 +347,14 @@ export default function CashierPatientsTab() {
     return hit?.name ?? `Ish joyi #${id}`;
   };
 
-  const departmentName = (id: number) => {
-    if (id <= 0) return "—";
-    return departments.find((d) => d.id === id)?.name ?? `#${id}`;
-  };
+  const positionSelectOptions = useMemo(() => {
+    const rows = spPositions.map((p) => ({ value: String(p.id), label: p.name }));
+    const pid = form.positionId;
+    if (showOrphanPosition && pid && !rows.some((r) => r.value === pid)) {
+      return [{ value: pid, label: `Lavozim #${pid}` }, ...rows];
+    }
+    return rows;
+  }, [spPositions, showOrphanPosition, form.positionId]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -354,375 +410,343 @@ export default function CashierPatientsTab() {
     }
   };
 
+  const industrySelectOptions = useMemo(
+    () => spIndustries.map((ind) => ({ value: String(ind.id), label: ind.name })),
+    [spIndustries],
+  );
+
+  const tableColumns: ColumnsType<PatientDto> = useMemo(
+    () => [
+      {
+        title: "№",
+        width: 72,
+        render: (_row, _record, index) => page * pageSize + index + 1,
+      },
+      { title: "Ism", ellipsis: true, render: (row) => row.firstName || "—" },
+      { title: "Familiya", ellipsis: true, render: (row) => row.lastName || "—" },
+      { title: "Otasining ismi", ellipsis: true, render: (row) => row.surname || "—" },
+      { title: "Telefon", render: (row) => row.phoneNumber || "—" },
+      {
+        title: "Tug‘ilgan sana",
+        render: (row) => (row.birthDay ? formatTableDate(row.birthDay) : "—"),
+      },
+      {
+        title: "Ish joyi",
+        ellipsis: true,
+        render: (row) => workplaceName(row.workplaceId),
+      },
+      {
+        title: "Lavozim",
+        ellipsis: true,
+        render: (row) =>
+          row.positionName?.trim()
+            ? row.positionName
+            : row.positionId > 0
+              ? `Lavozim #${row.positionId}`
+              : "—",
+      },
+      {
+        title: "Amallar",
+        key: "actions",
+        align: "right",
+        width: 120,
+        render: (row) => (
+          <Space size="small">
+            <Button type="text" size="small" icon={<Edit className="h-4 w-4" />} onClick={() => void openEdit(row)} />
+            <Button
+              type="text"
+              size="small"
+              danger
+              icon={<Trash2 className="h-4 w-4" />}
+              onClick={() => setDeleteTarget(row)}
+            />
+          </Space>
+        ),
+      },
+    ],
+    [page, pageSize, workplaces],
+  );
+
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle>Bemorlar</CardTitle>
-            {/* <CardDescription>POST/GET/PUT/DELETE patients — sahifalangan ro‘yxat.</CardDescription> */}
-          </div>
-          <Button className="bg-blue-600 hover:bg-blue-700 shrink-0" onClick={openCreate} disabled={loadingRef}>
-            <Plus className="h-4 w-4 mr-2" />
-            Bemor qo‘shish
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="rounded-md border overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[72px]">№</TableHead>
-                <TableHead>Ism</TableHead>
-                <TableHead>Familiya</TableHead>
-                <TableHead>Telefon</TableHead>
-                <TableHead>Tug‘ilgan sana</TableHead>
-                <TableHead>Ish joyi</TableHead>
-                <TableHead>Bo‘lim</TableHead>
-                <TableHead className="text-right w-[120px]">Amallar</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loadingList ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
-                    Yuklanmoqda…
-                  </TableCell>
-                </TableRow>
-              ) : patients.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
-                    Bemorlar yo‘q
-                  </TableCell>
-                </TableRow>
-              ) : (
-                patients.map((p, idx) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-mono text-sm tabular-nums">{page * pageSize + idx + 1}</TableCell>
-                    <TableCell className="text-sm">{p.firstName || "—"}</TableCell>
-                    <TableCell className="text-sm">{p.lastName || "—"}</TableCell>
-                    <TableCell className="text-sm font-mono">{p.phoneNumber || "—"}</TableCell>
-                    <TableCell className="text-sm tabular-nums whitespace-nowrap">{p.birthDay ? formatTableDate(p.birthDay) : "—"}</TableCell>
-                    <TableCell className="text-sm max-w-[180px] truncate" title={workplaceName(p.workplaceId)}>
-                      {workplaceName(p.workplaceId)}
-                    </TableCell>
-                    <TableCell className="text-sm max-w-[140px] truncate" title={departmentName(p.departmentId)}>
-                      {departmentName(p.departmentId)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="sm" type="button" onClick={() => void openEdit(p)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm" type="button" onClick={() => setDeleteTarget(p)}>
-                          <Trash2 className="h-4 w-4 text-red-500" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
+    <Card
+      title="Bemorlar"
+      extra={
+        <Button type="primary" icon={<Plus className="h-4 w-4" />} onClick={openCreate} disabled={loadingRef}>
+          Bemor qo‘shish
+        </Button>
+      }
+    >
+      <Space direction="vertical" size="large" className="w-full">
+        <Table<PatientDto>
+          rowKey="id"
+          loading={loadingList}
+          columns={tableColumns}
+          dataSource={patients}
+          pagination={false}
+          scroll={{ x: "max-content" }}
+          locale={{ emptyText: "Bemorlar yo‘q" }}
+        />
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-muted-foreground">Jami: {totalElements} ta</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <Select
-              value={String(pageSize)}
-              onValueChange={(v) => {
-                setPageSize(Number(v));
-                setPage(0);
-              }}
-            >
-              <SelectTrigger className="w-[110px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="10">10 / sahifa</SelectItem>
-                <SelectItem value="20">20 / sahifa</SelectItem>
-                <SelectItem value="50">50 / sahifa</SelectItem>
-              </SelectContent>
-            </Select>
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                disabled={page <= 0 || loadingList}
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-                aria-label="Oldingi sahifa"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <span className="text-sm tabular-nums px-2">
-                {page + 1} / {totalPages}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                disabled={loadingList || page >= totalPages - 1}
-                onClick={() => setPage((p) => p + 1)}
-                aria-label="Keyingi sahifa"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        <Dialog
-          open={dialogOpen}
-          onOpenChange={(open) => {
-            setDialogOpen(open);
-            if (!open) setEditingId(null);
+        <Pagination
+          current={page + 1}
+          pageSize={pageSize}
+          total={totalElements}
+          showSizeChanger
+          pageSizeOptions={[10, 20, 50]}
+          disabled={loadingList}
+          onChange={(p, ps) => {
+            if (ps != null && ps !== pageSize) {
+              setPageSize(ps);
+              setPage(0);
+            } else {
+              setPage(p - 1);
+            }
           }}
-        >
-          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg md:max-w-xl">
-            <DialogHeader>
-              <DialogTitle>{editingId != null ? "Bemorni tahrirlash" : "Yangi bemor"}</DialogTitle>
-              <DialogDescription>Barcha maydonlar server talabiga mos yuboriladi.</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="pt-fn">Ism</Label>
-                  <Input
-                    id="pt-fn"
-                    value={form.firstName}
-                    onChange={(e) => setForm({ ...form, firstName: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="pt-ln">Familiya</Label>
-                  <Input
-                    id="pt-ln"
-                    value={form.lastName}
-                    onChange={(e) => setForm({ ...form, lastName: e.target.value })}
-                  />
-                </div>
-              </div>
+          showTotal={(t) => `Jami: ${t} ta`}
+        />
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>Viloyat</Label>
-                  <Select
-                    value={form.regionId}
-                    onValueChange={(v) => setForm({ ...form, regionId: v, districtId: "", villageId: "" })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingRef ? "…" : "Tanlang"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {regions.map((r) => (
-                        <SelectItem key={r.id} value={String(r.id)}>
-                          {referenceNameLatLabel(r)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Tuman</Label>
-                  <Select
-                    value={form.districtId}
-                    onValueChange={(v) => setForm({ ...form, districtId: v, villageId: "" })}
-                    disabled={!form.regionId || loadingDistricts}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingDistricts ? "…" : "Tanlang"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {districts.map((d) => (
-                        <SelectItem key={d.id} value={String(d.id)}>
-                          {referenceNameLatLabel(d)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>Mahalla / qishloq</Label>
-                  <Select
-                    value={form.villageId}
-                    onValueChange={(v) => setForm({ ...form, villageId: v })}
-                    disabled={!form.districtId || loadingVillages}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingVillages ? "…" : "Tanlang"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0">Tanlanmagan (0)</SelectItem>
-                      {showOrphanVillage && (
-                        <SelectItem value={form.villageId}>ID {form.villageId}</SelectItem>
-                      )}
-                      {villages.map((v) => (
-                        <SelectItem key={v.id} value={String(v.id)}>
-                          {referenceNameLatLabel(v)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Ish joyi</Label>
-                  <Select value={form.workplaceId} onValueChange={(v) => setForm({ ...form, workplaceId: v })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Tanlang" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0">Tanlanmagan (0)</SelectItem>
-                      {showOrphanWorkplace && (
-                        <SelectItem value={form.workplaceId}>Ish joyi #{form.workplaceId}</SelectItem>
-                      )}
-                      {workplaces.map((w) => (
-                        <SelectItem key={w.id} value={String(w.id)}>
-                          {w.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>Bo‘lim</Label>
-                  <Select value={form.departmentId} onValueChange={(v) => setForm({ ...form, departmentId: v })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingRef ? "…" : "Tanlang"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0">Tanlanmagan (0)</SelectItem>
-                      {showOrphanDepartment && (
-                        <SelectItem value={form.departmentId}>Bo‘lim #{form.departmentId}</SelectItem>
-                      )}
-                      {departments.map((d) => (
-                        <SelectItem key={d.id} value={String(d.id)}>
-                          {d.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="pt-bd">Tug‘ilgan sana</Label>
-                  <DatePicker
-                    id="pt-bd"
-                    className="w-full"
-                    size="middle"
-                    placeholder="Sanani tanlang"
-                    format="YYYY-MM-DD"
-                    value={form.birthDay ? dayjs(form.birthDay, "YYYY-MM-DD") : null}
-                    style={{padding:'5px 10px'}}
-                    onChange={(date) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        birthDay: date ? date.format("YYYY-MM-DD") : "",
-                      }))
-                    }
-                    allowClear
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="pt-phone">Telefon</Label>
-                <Input
-                  id="pt-phone"
-                  type="tel"
-                  value={form.phoneNumber}
-                  onChange={(e) => setForm({ ...form, phoneNumber: e.target.value })}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="pt-addr">Manzil</Label>
-                <Input
-                  id="pt-addr"
-                  value={form.address}
-                  onChange={(e) => setForm({ ...form, address: e.target.value })}
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* <div className="space-y-2">
-                  <Label htmlFor="pt-priv">Imtiyoz (privilege)</Label>
-                  <Input
-                    id="pt-priv"
-                    type="number"
-                    min={0}
-                    value={form.privilege}
-                    onChange={(e) => setForm({ ...form, privilege: e.target.value })}
-                  />
-                </div> */}
-                <div className="flex items-center justify-between rounded-lg border p-3 sm:col-span-2">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="pt-sms">SMS yuborish</Label>
-                    <p className="text-xs text-muted-foreground">isSendSms</p>
-                  </div>
-                  <Switch
-                    id="pt-sms"
-                    checked={form.isSendSms}
-                    onCheckedChange={(checked) => setForm({ ...form, isSendSms: checked })}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="pt-comment">Izoh</Label>
-                <Textarea
-                  id="pt-comment"
-                  rows={3}
-                  value={form.comment}
-                  onChange={(e) => setForm({ ...form, comment: e.target.value })}
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
-                  Bekor qilish
-                </Button>
-                <Button type="button" className="bg-blue-600 hover:bg-blue-700" onClick={() => void handleSave()} disabled={saving}>
-                  {saving ? "Saqlanmoqda…" : "Saqlash"}
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(o) => !o && setDeleteTarget(null)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Bemorni o‘chirish</AlertDialogTitle>
-              <AlertDialogDescription>
-                {deleteTarget
-                  ? `${deleteTarget.firstName} ${deleteTarget.lastName} (#${deleteTarget.id}) o‘chiriladi.`
-                  : ""}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={deleting}>Bekor</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                disabled={deleting}
-                onClick={(e) => {
-                  e.preventDefault();
-                  void confirmDelete();
+        <Modal
+          title={editingId != null ? "Bemorni tahrirlash" : "Yangi bemor"}
+          open={dialogOpen}
+          onCancel={() => {
+            setDialogOpen(false);
+            setEditingId(null);
+          }}
+          width={720}
+          destroyOnClose
+          footer={
+            <Space>
+              <Button
+                onClick={() => {
+                  setDialogOpen(false);
+                  setEditingId(null);
                 }}
               >
-                {deleting ? "O‘chirilmoqda…" : "O‘chirish"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </CardContent>
+                Bekor qilish
+              </Button>
+              <Button type="primary" loading={saving} onClick={() => void handleSave()}>
+                {saving ? "Saqlanmoqda…" : "Saqlash"}
+              </Button>
+            </Space>
+          }
+        >
+          <Typography.Paragraph type="secondary" className="!mb-4">
+            Barcha maydonlar server talabiga mos yuboriladi.
+          </Typography.Paragraph>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Ism</Typography.Text>
+              <Input value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Familiya</Typography.Text>
+              <Input value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Otasining ismi</Typography.Text>
+              <Input value={form.surname} onChange={(e) => setForm({ ...form, surname: e.target.value })} />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Viloyat</Typography.Text>
+              <Select
+                allowClear
+                className="w-full"
+                placeholder={loadingRef ? "…" : "Tanlang"}
+                loading={loadingRef}
+                disabled={loadingRef}
+                value={form.regionId || undefined}
+                onChange={(v) =>
+                  setForm({
+                    ...form,
+                    regionId: v ?? "",
+                    districtId: "",
+                    villageId: "",
+                  })
+                }
+                options={regions.map((r) => ({ value: String(r.id), label: referenceNameLatLabel(r) }))}
+                showSearch
+                optionFilterProp="label"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Tuman</Typography.Text>
+              <Select
+                allowClear
+                className="w-full"
+                placeholder={loadingDistricts ? "…" : "Tanlang"}
+                loading={loadingDistricts}
+                disabled={!form.regionId || loadingDistricts}
+                value={form.districtId || undefined}
+                onChange={(v) =>
+                  setForm({
+                    ...form,
+                    districtId: v ?? "",
+                    villageId: "",
+                  })
+                }
+                options={districts.map((d) => ({ value: String(d.id), label: referenceNameLatLabel(d) }))}
+                showSearch
+                optionFilterProp="label"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Mahalla / qishloq</Typography.Text>
+              <Select
+                allowClear
+                className="w-full"
+                placeholder={loadingVillages ? "…" : "Tanlang"}
+                loading={loadingVillages}
+                disabled={!form.districtId || loadingVillages}
+                value={form.villageId === "" ? undefined : form.villageId}
+                onChange={(v) => setForm({ ...form, villageId: v ?? "0" })}
+                options={[
+                  { value: "0", label: "Tanlanmagan (0)" },
+                  ...(showOrphanVillage && form.villageId && form.villageId !== "0"
+                    ? [{ value: form.villageId, label: `ID ${form.villageId}` }]
+                    : []),
+                  ...villages.map((v) => ({ value: String(v.id), label: referenceNameLatLabel(v) })),
+                ]}
+                showSearch
+                optionFilterProp="label"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Ish joyi</Typography.Text>
+              <Select
+                allowClear
+                className="w-full"
+                placeholder="Tanlang"
+                value={form.workplaceId === "" ? undefined : form.workplaceId}
+                onChange={(v) => setForm({ ...form, workplaceId: v ?? "0" })}
+                options={[
+                  { value: "0", label: "Tanlanmagan (0)" },
+                  ...(showOrphanWorkplace && form.workplaceId && form.workplaceId !== "0"
+                    ? [{ value: form.workplaceId, label: `Ish joyi #${form.workplaceId}` }]
+                    : []),
+                  ...workplaces.map((w) => ({ value: String(w.id), label: w.name })),
+                ]}
+                showSearch
+                optionFilterProp="label"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Soha</Typography.Text>
+              <Select
+                allowClear
+                className="w-full"
+                placeholder={loadingRef ? "…" : "Tanlang"}
+                loading={loadingRef}
+                disabled={loadingRef}
+                value={form.spIndustryId || undefined}
+                onChange={(v) =>
+                  setForm({
+                    ...form,
+                    spIndustryId: v ?? "",
+                    positionId: "",
+                  })
+                }
+                options={industrySelectOptions}
+                showSearch
+                optionFilterProp="label"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Lavozim</Typography.Text>
+              <Select
+                allowClear
+                className="w-full"
+                placeholder={loadingSpPositions ? "…" : "Tanlang"}
+                loading={loadingSpPositions}
+                disabled={!form.spIndustryId || loadingSpPositions}
+                value={form.positionId || undefined}
+                onChange={(v) => setForm({ ...form, positionId: v ?? "" })}
+                options={positionSelectOptions}
+                showSearch
+                optionFilterProp="label"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Tug‘ilgan sana</Typography.Text>
+              <DatePicker
+                className="w-full"
+                placeholder="Sanani tanlang"
+                format="YYYY-MM-DD"
+                value={form.birthDay ? dayjs(form.birthDay, "YYYY-MM-DD") : null}
+                onChange={(d) => setForm({ ...form, birthDay: d ? d.format("YYYY-MM-DD") : "" })}
+                allowClear
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Telefon</Typography.Text>
+              <Input
+                addonBefore={UZ_PHONE_PREFIX}
+                className="w-full"
+                inputMode="numeric"
+                autoComplete="tel-national"
+                maxLength={PHONE_LOCAL_DIGITS}
+                placeholder="901234567"
+                value={form.phoneLocalDigits}
+                onChange={(e) => {
+                  const next = e.target.value.replace(/\D/g, "").slice(0, PHONE_LOCAL_DIGITS);
+                  setForm({ ...form, phoneLocalDigits: next });
+                }}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Manzil</Typography.Text>
+              <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Imtiyoz (privilege)</Typography.Text>
+              <InputNumber
+                className="w-full"
+                min={0}
+                value={Number(form.privilege) || 0}
+                onChange={(v) => setForm({ ...form, privilege: String(v ?? 0) })}
+              />
+            </div>
+            <div className="flex flex-col justify-center gap-1 sm:col-span-2">
+              <Space align="center">
+                <Switch checked={form.isSendSms} onChange={(c) => setForm({ ...form, isSendSms: c })} />
+                <Typography.Text>SMS yuborish (isSendSms)</Typography.Text>
+              </Space>
+            </div>
+
+            <div className="flex flex-col gap-1 sm:col-span-2">
+              <Typography.Text>Izoh</Typography.Text>
+              <Input.TextArea
+                rows={3}
+                value={form.comment}
+                onChange={(e) => setForm({ ...form, comment: e.target.value })}
+              />
+            </div>
+          </div>
+        </Modal>
+
+        <Modal
+          title="Bemorni o‘chirish"
+          open={deleteTarget != null}
+          onCancel={() => !deleting && setDeleteTarget(null)}
+          onOk={() => void confirmDelete()}
+          confirmLoading={deleting}
+          okText="O‘chirish"
+          okButtonProps={{ danger: true }}
+          cancelText="Bekor"
+        >
+          <p>
+            {deleteTarget
+              ? `${[deleteTarget.firstName, deleteTarget.lastName, deleteTarget.surname].filter(Boolean).join(" ")} (#${deleteTarget.id}) o‘chiriladi.`
+              : ""}
+          </p>
+        </Modal>
+      </Space>
     </Card>
   );
 }

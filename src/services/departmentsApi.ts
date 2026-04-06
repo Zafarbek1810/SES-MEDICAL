@@ -25,7 +25,7 @@ export function normalizeDepartmentDto(raw: unknown): DepartmentDto | null {
 
 /** GET /departments — barcha bo‘limlar */
 export async function fetchDepartments(): Promise<DepartmentDto[]> {
-  const raw = await apiFetch<unknown>("/departments", { method: "GET" });
+  const raw = await apiFetch<unknown>("/sp-ses-departments", { method: "GET" });
   const rows = unwrapList<unknown>(raw);
   return rows.map(normalizeDepartmentDto).filter((x): x is DepartmentDto => x !== null);
 }

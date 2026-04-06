@@ -3,11 +3,13 @@ import { apiFetch, unwrapList } from "./apiHttp";
 export type SavePatientBody = {
   firstName: string;
   lastName: string;
+  surname: string;
   regionId: number;
   districtId: number;
   villageId: number;
   workplaceId: number;
-  departmentId: number;
+  /** GET /sp-positions — lavozim id */
+  positionId: number;
   birthDay: string;
   phoneNumber: string;
   address: string;
@@ -18,6 +20,9 @@ export type SavePatientBody = {
 
 export type PatientDto = SavePatientBody & {
   id: number;
+  /** GET javobida bo‘lsa — forma uchun soha tanlash */
+  positionIndustryId?: number;
+  positionName?: string;
 };
 
 export type PagedPatients = {
@@ -26,6 +31,12 @@ export type PagedPatients = {
   size: number;
   totalPages: number;
   totalElements: number;
+};
+
+/** GET /patients — ixtiyoriy query */
+export type FetchPatientsParams = {
+  /** Berilganda query stringga qo‘shiladi (masalan buyurtma uchun faqat mos bemorlar) */
+  availableForOrder?: boolean;
 };
 
 function toNum(v: unknown): number | undefined {
@@ -64,21 +75,33 @@ export function normalizePatient(raw: unknown): PatientDto | null {
   const o = u as Record<string, unknown>;
   const id = toNum(o.id);
   if (id === undefined) return null;
-  return {
+  const positionId =
+    toNum(o.positionId ?? o.position_id) ?? toNum(o.departmentId ?? o.department_id) ?? 0;
+  const positionIndustryId = toNum(
+    o.positionIndustryId ?? o.position_industry_id ?? o.industryId ?? o.industry_id,
+  );
+  const positionNameRaw = toStr(o.positionName ?? o.position_name);
+  const base: PatientDto = {
     id,
     firstName: toStr(o.firstName ?? o.first_name),
     lastName: toStr(o.lastName ?? o.last_name),
+    surname: toStr(o.surname ?? o.middle_name ?? o.middleName ?? o.patronymic),
     regionId: toNum(o.regionId ?? o.region_id) ?? 0,
     districtId: toNum(o.districtId ?? o.district_id) ?? 0,
     villageId: toNum(o.villageId ?? o.village_id) ?? 0,
     workplaceId: toNum(o.workplaceId ?? o.workplace_id) ?? 0,
-    departmentId: toNum(o.departmentId ?? o.department_id) ?? 0,
+    positionId,
     birthDay: toStr(o.birthDay ?? o.birth_day ?? o.birthDate ?? o.birth_date).slice(0, 10),
     phoneNumber: toStr(o.phoneNumber ?? o.phone_number ?? o.phone),
     address: toStr(o.address),
     privilege: toNum(o.privilege) ?? 0,
     comment: toStr(o.comment),
     isSendSms: toBool(o.isSendSms ?? o.is_send_sms ?? o.sendSms),
+  };
+  return {
+    ...base,
+    ...(positionIndustryId !== undefined ? { positionIndustryId } : {}),
+    ...(positionNameRaw ? { positionName: positionNameRaw } : {}),
   };
 }
 
@@ -113,8 +136,15 @@ function extractCreatedId(raw: unknown): number | undefined {
   return undefined;
 }
 
-export async function fetchPatients(page = 0, size = 10): Promise<PagedPatients> {
+export async function fetchPatients(
+  page = 0,
+  size = 10,
+  params?: FetchPatientsParams,
+): Promise<PagedPatients> {
   const q = new URLSearchParams({ page: String(page), size: String(size) });
+  if (params?.availableForOrder !== undefined) {
+    q.set("availableForOrder", String(params.availableForOrder));
+  }
   const raw = await apiFetch<unknown>(`/patients?${q.toString()}`, { method: "GET" });
   const rows = unwrapList<unknown>(raw);
   const items = rows.map(normalizePatient).filter((x): x is PatientDto => x !== null);

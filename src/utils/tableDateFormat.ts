@@ -14,12 +14,12 @@ export function formatTableDate(input: string | number | Date | null | undefined
     const s = input.trim();
     const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
     if (ymd) {
-      return `${ymd[3]}-${ymd[2]}-${ymd[1]}`;
+      return `${ymd[3]}.${ymd[2]}.${ymd[1]}`;
     }
   }
   const d = input instanceof Date ? input : new Date(input as number | string);
   if (Number.isNaN(d.getTime())) return "—";
-  return `${pad2(d.getDate())}-${pad2(d.getMonth() + 1)}-${d.getFullYear()}`;
+  return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`;
 }
 
 /** To‘liq sana-vaqt — `dd-mm-yyyy HH:mm` */

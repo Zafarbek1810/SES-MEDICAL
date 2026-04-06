@@ -1,14 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Edit, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
-import { DatePicker } from "antd";
+import {
+  DatePicker,
+  Modal,
+  Input,
+  Select as AntSelect,
+  Button as AntButton,
+  Typography,
+  Space,
+} from "antd";
 import dayjs from "dayjs";
 import { Button } from "../ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
-import { Input } from "../ui/input";
-import { Label } from "../ui/label";
-import { Textarea } from "../ui/textarea";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import {
   AlertDialog,
@@ -310,10 +314,9 @@ export default function CashierSamplesTab() {
             <CardTitle>Namunalarni boshqarish</CardTitle>
             {/* <CardDescription>POST/GET/PUT/DELETE samples — sahifalangan ro‘yxat.</CardDescription> */}
           </div>
-          <Button className="bg-blue-600 hover:bg-blue-700 shrink-0" onClick={openCreate} disabled={loadingRef}>
-            <Plus className="h-4 w-4 mr-2" />
+          <AntButton type="primary" icon={<Plus className="h-4 w-4" />} onClick={openCreate} disabled={loadingRef} className="shrink-0">
             Namuna qo‘shish
-          </Button>
+          </AntButton>
         </div>
       </CardHeader>
 
@@ -431,200 +434,163 @@ export default function CashierSamplesTab() {
           </div>
         </div>
 
-        <Dialog
+        <Modal
+          title={editingId != null ? "Namunani tahrirlash" : "Yangi namuna"}
           open={dialogOpen}
-          onOpenChange={(open) => {
-            setDialogOpen(open);
-            if (!open) {
-              setEditingId(null);
-            }
+          onCancel={() => {
+            setDialogOpen(false);
+            setEditingId(null);
           }}
+          width={720}
+          destroyOnClose
+          styles={{ body: { maxHeight: "min(90vh, 720px)", overflowY: "auto" } }}
+          footer={
+            <Space>
+              <AntButton
+                onClick={() => {
+                  setDialogOpen(false);
+                  setEditingId(null);
+                }}
+                disabled={saving}
+              >
+                Bekor qilish
+              </AntButton>
+              <AntButton type="primary" loading={saving} onClick={() => void handleSave()}>
+                Saqlash
+              </AntButton>
+            </Space>
+          }
         >
-          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg md:max-w-xl">
-            <DialogHeader>
-              <DialogTitle>{editingId != null ? "Namunani tahrirlash" : "Yangi namuna"}</DialogTitle>
-              <DialogDescription>Barcha maydonlar server talabiga mos yuboriladi.</DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Namuna turi</Label>
-                <Select value={form.sampleType} onValueChange={(v) => setForm({ ...form, sampleType: v })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={loadingRef ? "…" : "Tanlang"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(enums?.sampleTypes ?? []).map((e) => (
-                      <SelectItem key={e.value} value={String(e.value)}>
-                        {enumEntryDisplayLabel(e)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2 relative">
-                  <Label htmlFor="sp-name">Nomi</Label>
-                  <Input id="sp-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sp-date-collected">Olingan sana va vaqt</Label>
-                  <DatePicker
-                    id="sp-date-collected"
-                    className="w-full"
-                    size="medium"
-                    showTime={{ format: "HH:mm" }}
-                    placeholder="Sana va vaqtni tanlang"
-                    format="YYYY-MM-DD HH:mm:ss.SSS"
-                    value={form.collectedDate ? dayjs(form.collectedDate) : null}
-                    onChange={(date) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        collectedDate: date ? date.toISOString() : "",
-                      }))
-                    }
-                    allowClear
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="sp-date-submission">Laboratoriyaga taqdim etilgan sana va vaqti</Label>
-                  <DatePicker
-                    id="sp-date-submission"
-                    className="w-full"
-                    size="medium"
-                    showTime={{ format: "HH:mm" }}
-                    placeholder="Sana va vaqtni tanlang"
-                    format="YYYY-MM-DD HH:mm:ss.SSS"
-                    value={form.dateSubmissionLaboratory ? dayjs(form.dateSubmissionLaboratory) : null}
-                    onChange={(date) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        dateSubmissionLaboratory: date ? date.toISOString() : "",
-                      }))
-                    }
-                    allowClear
-                  />
-                </div>
-                {/* <div className="space-y-2">
-                  <Label>Laboratoriya</Label>
-                  <Select
-                    value={form.laboratoryId}
-                    onValueChange={(v) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        laboratoryId: v,
-                        details: prev.details.map((d) => ({ ...d, analysisId: "" })),
-                      }))
-                    }
-                    disabled={loadingLaboratories}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingLaboratories ? "Yuklanmoqda…" : "Tanlang"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {showOrphanLaboratory && (
-                        <SelectItem value={form.laboratoryId}>
-                          Laboratoriya #{form.laboratoryId} (ro‘yxatda yo‘q)
-                        </SelectItem>
-                      )}
-                      {laboratories.map((l) => (
-                        <SelectItem key={l.id} value={String(l.id)}>
-                          {l.nameUz || l.nameRu || `Laboratoriya #${l.id}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div> */}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>Viloyat</Label>
-                  <Select
-                    value={form.regionId}
-                    onValueChange={(v) => setForm({ ...form, regionId: v, districtId: "" })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingRef ? "…" : "Tanlang"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {regions.map((r) => (
-                        <SelectItem key={r.id} value={String(r.id)}>
-                          {referenceNameLatLabel(r)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Tuman</Label>
-                  <Select
-                    value={form.districtId}
-                    onValueChange={(v) => setForm({ ...form, districtId: v })}
-                    disabled={!form.regionId || loadingDistricts}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingDistricts ? "…" : "Tanlang"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {districts.map((d) => (
-                        <SelectItem key={d.id} value={String(d.id)}>
-                          {referenceNameLatLabel(d)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="sp-source">Namuna olingan joy</Label>
-                  <Input
-                    id="sp-source"
-                    value={form.sourceName}
-                    onChange={(e) => setForm({ ...form, sourceName: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sp-source-addr">Namuna olingan manzil</Label>
-                  <Input
-                    id="sp-source-addr"
-                    value={form.sourceAddress}
-                    onChange={(e) => setForm({ ...form, sourceAddress: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="sp-desc">Tavsif</Label>
-                <Textarea
-                  id="sp-desc"
-                  rows={3}
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1">
+                <Typography.Text>Namuna turi</Typography.Text>
+                <AntSelect
+                  className="w-full"
+                  placeholder={loadingRef ? "…" : "Tanlang"}
+                  loading={loadingRef}
+                  disabled={loadingRef}
+                  value={form.sampleType || undefined}
+                  onChange={(v) => setForm({ ...form, sampleType: v ?? "" })}
+                  options={(enums?.sampleTypes ?? []).map((e) => ({
+                    value: String(e.value),
+                    label: enumEntryDisplayLabel(e),
+                  }))}
+                  showSearch
+                  optionFilterProp="label"
                 />
               </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
-                  Bekor qilish
-                </Button>
-                <Button
-                  type="button"
-                  className="bg-blue-600 hover:bg-blue-700"
-                  onClick={() => void handleSave()}
-                  disabled={saving}
-                >
-                  {saving ? "Saqlanmoqda…" : "Saqlash"}
-                </Button>
+              <div className="flex flex-col gap-1">
+                <Typography.Text>Nomi</Typography.Text>
+                <Input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="Nomi"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Typography.Text>Olingan sana va vaqt</Typography.Text>
+                <DatePicker
+                  className="w-full"
+                  showTime={{ format: "HH:mm" }}
+                  placeholder="Sana va vaqtni tanlang"
+                  format="YYYY-MM-DD HH:mm:ss.SSS"
+                  value={form.collectedDate ? dayjs(form.collectedDate) : null}
+                  onChange={(date) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      collectedDate: date ? date.toISOString() : "",
+                    }))
+                  }
+                  allowClear
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Typography.Text>Laboratoriyaga taqdim etilgan sana va vaqti</Typography.Text>
+                <DatePicker
+                  className="w-full"
+                  showTime={{ format: "HH:mm" }}
+                  placeholder="Sana va vaqtni tanlang"
+                  format="YYYY-MM-DD HH:mm:ss.SSS"
+                  value={form.dateSubmissionLaboratory ? dayjs(form.dateSubmissionLaboratory) : null}
+                  onChange={(date) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      dateSubmissionLaboratory: date ? date.toISOString() : "",
+                    }))
+                  }
+                  allowClear
+                />
               </div>
             </div>
-          </DialogContent>
-        </Dialog>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1">
+                <Typography.Text>Viloyat</Typography.Text>
+                <AntSelect
+                  className="w-full"
+                  placeholder={loadingRef ? "…" : "Tanlang"}
+                  loading={loadingRef}
+                  disabled={loadingRef}
+                  value={form.regionId || undefined}
+                  onChange={(v) => setForm({ ...form, regionId: v ?? "", districtId: "" })}
+                  options={regions.map((r) => ({
+                    value: String(r.id),
+                    label: referenceNameLatLabel(r),
+                  }))}
+                  showSearch
+                  optionFilterProp="label"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Typography.Text>Tuman</Typography.Text>
+                <AntSelect
+                  className="w-full"
+                  placeholder={loadingDistricts ? "…" : "Tanlang"}
+                  loading={loadingDistricts}
+                  disabled={!form.regionId || loadingDistricts}
+                  value={form.districtId || undefined}
+                  onChange={(v) => setForm({ ...form, districtId: v ?? "" })}
+                  options={districts.map((d) => ({
+                    value: String(d.id),
+                    label: referenceNameLatLabel(d),
+                  }))}
+                  showSearch
+                  optionFilterProp="label"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1">
+                <Typography.Text>Namuna olingan joy</Typography.Text>
+                <Input
+                  value={form.sourceName}
+                  onChange={(e) => setForm({ ...form, sourceName: e.target.value })}
+                  placeholder="Joy"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Typography.Text>Namuna olingan manzil</Typography.Text>
+                <Input
+                  value={form.sourceAddress}
+                  onChange={(e) => setForm({ ...form, sourceAddress: e.target.value })}
+                  placeholder="Manzil"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Tavsif</Typography.Text>
+              <Input.TextArea
+                rows={3}
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Tavsif"
+              />
+            </div>
+          </div>
+        </Modal>
 
         <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(o) => !o && setDeleteTarget(null)}>
           <AlertDialogContent>

@@ -9,11 +9,18 @@ export type OrderDetailBody = {
 
 export type SaveOrderBody = {
   orderType: number;
-  laboratoryId: number;
   patientId: number | null;
   sampleId: number | null;
+  /** SAN_MINIMUM + «San Minimum» lab: o‘quvchi yozuvining id si (GET /san-minimums) */
+  sanMinimumId?: number | null;
+  /** SAN_MINIMUM uchun kurs identifikatori (GET /courses/active) */
+  courseId?: number | null;
   paymentType: number;
+  /** Agar karta bilan to‘lov bo‘lsa, karta identifikatori (hozircha ixtiyoriy) */
+  cardId?: number | null;
   paymentStatus: number;
+  /** Katta darajadagi chegirma foizi (0–100) — SAN_MINIMUM uchun umumiy */ 
+  discountPercent?: number;
   details: OrderDetailBody[];
 };
 
@@ -48,8 +55,16 @@ export type OrderDto = {
   laboratoryId: number;
   patientId: number;
   sampleId: number;
+  /** SAN_MINIMUM buyurtmada server qaytarsa */
+  sanMinimumId?: number;
+  sanMinimumFirstName?: string | null;
+  sanMinimumLastName?: string | null;
   patientFirstName?: string | null;
   patientLastName?: string | null;
+  /** GET /orders javobida bemoring telefoni */
+  patientPhoneNumber?: string | null;
+  /** GET /orders javobida san minimum uchun telefon */
+  sanMinimumPhoneNumber?: string | null;
   sampleType?: number | null;
   sampleName?: string | null;
   sampleSourceName?: string | null;
@@ -293,15 +308,28 @@ export function normalizeOrder(raw: unknown): OrderDto | null {
     }
   }
 
+  const sanMinRaw = toNum(o.sanMinimumId ?? o.san_minimum_id);
+  const patientIdRaw = toNum(o.patientId ?? o.patient_id) ?? 0;
+  const sampleIdRaw = toNum(o.sampleId ?? o.sample_id) ?? 0;
+  const sanMinimumFirstName = toStrNull(o.sanMinimumFirstName ?? o.san_minimum_first_name);
+  const sanMinimumLastName = toStrNull(o.sanMinimumLastName ?? o.san_minimum_last_name);
+  const patientPhoneNumber = toStrNull(o.patientPhoneNumber ?? o.patient_phone_number);
+  const sanMinimumPhoneNumber = toStrNull(o.sanMinimumPhoneNumber ?? o.san_minimum_phone_number);
+
   return {
     id,
     orderType: toNum(o.orderType ?? o.order_type) ?? 0,
     ...(orderTypeName ? { orderTypeName } : {}),
     laboratoryId,
-    patientId: toNum(o.patientId ?? o.patient_id) ?? 0,
-    sampleId: toNum(o.sampleId ?? o.sample_id) ?? 0,
+    patientId: patientIdRaw,
+    sampleId: sampleIdRaw,
+    ...(sanMinRaw !== undefined && sanMinRaw > 0 ? { sanMinimumId: sanMinRaw } : {}),
+    ...(sanMinimumFirstName != null ? { sanMinimumFirstName } : {}),
+    ...(sanMinimumLastName != null ? { sanMinimumLastName } : {}),
     patientFirstName,
     patientLastName,
+    ...(patientPhoneNumber != null ? { patientPhoneNumber } : {}),
+    ...(sanMinimumPhoneNumber != null ? { sanMinimumPhoneNumber } : {}),
     sampleType,
     sampleName,
     sampleSourceName,
@@ -367,6 +395,20 @@ export async function fetchOrder(id: number): Promise<OrderDto> {
   throw new Error("Buyurtma ma’lumoti noto‘g‘ri");
 }
 
+function fallbackOrderFromBody(id: number, body: SaveOrderBody): OrderDto {
+  return {
+    id,
+    orderType: body.orderType,
+    laboratoryId: 0,
+    patientId: body.patientId ?? 0,
+    sampleId: body.sampleId ?? 0,
+    ...(body.sanMinimumId != null && body.sanMinimumId > 0 ? { sanMinimumId: body.sanMinimumId } : {}),
+    paymentType: body.paymentType,
+    paymentStatus: body.paymentStatus,
+    details: body.details.map((d) => ({ ...d })),
+  };
+}
+
 export async function createOrder(body: SaveOrderBody): Promise<OrderDto> {
   const res = await apiFetch<unknown>("/orders", {
     method: "POST",
@@ -380,7 +422,7 @@ export async function createOrder(body: SaveOrderBody): Promise<OrderDto> {
     try {
       return await fetchOrder(createdId);
     } catch {
-      return normalizeOrder(res) ?? { id: createdId, ...body, details: body.details.map((d) => ({ ...d })) };
+      return normalizeOrder(res) ?? fallbackOrderFromBody(createdId, body);
     }
   }
   const direct = normalizeOrder(res);
@@ -398,7 +440,7 @@ export async function updateOrder(id: number, body: SaveOrderBody): Promise<Orde
   try {
     return await fetchOrder(id);
   } catch {
-    return { id, ...body, details: body.details.map((d) => ({ ...d })) };
+    return fallbackOrderFromBody(id, body);
   }
 }
 

@@ -13,6 +13,10 @@ export type EnumsData = {
   paymentStatuses: EnumEntry[];
   paymentTypes: EnumEntry[];
   sampleTypes: EnumEntry[];
+  /** San minimum kurs holati (GET /san-minimums?courseState=…) */
+  courseStates: EnumEntry[];
+  /** San minimum to‘lovi: pullik / bepul */
+  sanPaymentTypes: EnumEntry[];
 };
 
 const emptyEnums = (): EnumsData => ({
@@ -22,6 +26,8 @@ const emptyEnums = (): EnumsData => ({
   paymentStatuses: [],
   paymentTypes: [],
   sampleTypes: [],
+  courseStates: [],
+  sanPaymentTypes: [],
 });
 
 function parseEnumArray(raw: unknown, key: string): EnumEntry[] {
@@ -60,6 +66,8 @@ export async function fetchEnums(): Promise<EnumsData> {
     paymentStatuses: parseEnumArray(raw, "paymentStatuses"),
     paymentTypes: parseEnumArray(raw, "paymentTypes"),
     sampleTypes: parseEnumArray(raw, "sampleTypes"),
+    courseStates: parseEnumArray(raw, "courseStates"),
+    sanPaymentTypes: parseEnumArray(raw, "sanPaymentTypes"),
   };
 }
 

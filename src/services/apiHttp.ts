@@ -102,6 +102,9 @@ export function unwrapList<T>(data: unknown): T[] {
       "orders",
       "patients",
       "departments",
+      "sanMinimums",
+      "courses",
+      "coursePrices",
     ] as const;
     for (const k of keys) {
       const v = o[k];
@@ -150,4 +153,37 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   return data as T;
+}
+
+/** PDF/boshqa ikkilik fayl — JSON emas (masalan, sertifikat yuklash). */
+export async function apiFetchBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const blobInit: RequestInit = {
+    ...init,
+    headers: {
+      Accept: "*/*",
+      ...((init?.headers as Record<string, string>) ?? {}),
+    },
+  };
+
+  let res = await rawFetch(path, blobInit);
+
+  if (!res.ok) {
+    const text = await res.text();
+    const data = parseJsonSafe(text);
+    if (shouldTryRefresh(res.status, data)) {
+      const refreshed = await ensureFreshAccessToken();
+      if (refreshed) {
+        res = await rawFetch(path, blobInit);
+        if (!res.ok) {
+          const text2 = await res.text();
+          const data2 = parseJsonSafe(text2);
+          throw new Error(getErrorMessage(data2, res.status, text2));
+        }
+        return res.blob();
+      }
+    }
+    throw new Error(getErrorMessage(data, res.status, text));
+  }
+
+  return res.blob();
 }
