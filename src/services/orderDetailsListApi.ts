@@ -34,6 +34,8 @@ export type OrderDetailListFilters = {
   sampleName?: string;
 };
 
+export type AnalysisStateCode = 34 | 44;
+
 export type PagedOrderDetails = {
   items: OrderDetailListItem[];
   page: number;
@@ -112,6 +114,45 @@ function appendFilters(q: URLSearchParams, filters: OrderDetailListFilters | und
   if (filters.sampleName?.trim()) q.set("sampleName", filters.sampleName.trim());
 }
 
+function unwrapSinglePayload(raw: unknown): unknown {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    if (o.data != null && typeof o.data === "object" && !Array.isArray(o.data)) return o.data;
+  }
+  return raw;
+}
+
+function extractMessage(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const direct = typeof o.message === "string" ? o.message.trim() : "";
+  if (direct) return direct;
+  const data = o.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const nested = (data as Record<string, unknown>).message;
+    if (typeof nested === "string" && nested.trim()) return nested.trim();
+  }
+  return null;
+}
+
+/**
+ * Bitta buyurtma qatori — GET `/order-details/{id}` yoki ro‘yxatdan qidirish.
+ */
+export async function fetchOrderDetailById(id: number): Promise<OrderDetailListItem | null> {
+  try {
+    const raw = await apiFetch<unknown>(`/order-details/${id}`, { method: "GET" });
+    const entity = unwrapSinglePayload(raw);
+    return normalizeOrderDetailListItem(entity);
+  } catch {
+    try {
+      const page = await fetchOrderDetailsList(0, 1000);
+      return page.items.find((x) => x.id === id) ?? null;
+    } catch {
+      return null;
+    }
+  }
+}
+
 export async function fetchOrderDetailsList(
   page = 0,
   size = 20,
@@ -135,4 +176,19 @@ export async function fetchOrderDetailsList(
     totalPages: Math.max(1, totalPages),
     totalElements,
   };
+}
+
+/**
+ * Buyurtma qatori tahlil holatini yangilash.
+ * PATCH `/order-details/{id}/analysis-status`
+ */
+export async function patchOrderDetailAnalysisStatus(
+  id: number,
+  analysisStateCode: AnalysisStateCode
+): Promise<string | null> {
+  const q = new URLSearchParams({ analysisStateCode: String(analysisStateCode) });
+  const raw = await apiFetch<unknown>(`/order-details/${id}/analysis-status?${q.toString()}`, {
+    method: "PATCH",
+  });
+  return extractMessage(raw);
 }

@@ -749,16 +749,25 @@ export default function SanMinimumsTab({
         },
       },
       {
-        title: "1-kun",
-        render: (row) => renderSanSessionDateCell(row.firstDate, 1),
-      },
-      {
-        title: "2-kun",
-        render: (row) => renderSanSessionDateCell(row.secondDate, 2),
-      },
-      {
-        title: "3-kun",
-        render: (row) => renderSanSessionDateCell(row.thirdDate, 3),
+        title: "Kursda qatnashgan sanalari",
+        align: "center",
+        children: [
+          {
+            title: "1-kun",
+            align: "center",
+            render: (row) => renderSanSessionDateCell(row.firstDate, 1),
+          },
+          {
+            title: "2-kun",
+            align: "center",
+            render: (row) => renderSanSessionDateCell(row.secondDate, 2),
+          },
+          {
+            title: "3-kun",
+            align: "center",
+            render: (row) => renderSanSessionDateCell(row.thirdDate, 3),
+          },
+        ],
       },
       {
         title: "Kursni tugatganlik holati",

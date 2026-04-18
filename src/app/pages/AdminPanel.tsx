@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Users, Plus, Search, Filter, Edit, Trash2, TestTube, Building2, Banknote, ChevronLeft, ChevronRight, Briefcase } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
 import { toast } from "sonner";
+import { Modal, Input as AntInput, Select as AntSelect, Button as AntdButton, Typography, Space } from "antd";
 import type { LaboratoryDto } from "../../services/laboratoriesApi";
 import {
   createLaboratory,
@@ -41,6 +42,7 @@ import {
   fetchAnalysisPrices,
   updateAnalysisPrice,
 } from "../../services/analysisPricesApi";
+import { normalizeRoleKey } from "../../services/auth";
 import type { ReferenceItem } from "../../services/referenceDataApi";
 import { fetchDistricts, fetchRegions, fetchRoles, roleReferenceLabel } from "../../services/referenceDataApi";
 import type { UserDto } from "../../services/usersApi";
@@ -111,6 +113,7 @@ const emptyUserForm = () => ({
   roleId: "",
   regionId: "",
   districtId: "",
+  laboratoryId: "",
 });
 
 export default function AdminPanel() {
@@ -221,6 +224,23 @@ export default function AdminPanel() {
     roles.forEach((r) => m.set(r.id, roleReferenceLabel(r)));
     return m;
   }, [roles]);
+
+  const isLaboratoryRoleId = useCallback((roleIdNum: number) => {
+    const r = roles.find((x) => x.id === roleIdNum);
+    if (!r?.name) return false;
+    const k = normalizeRoleKey(String(r.name));
+    return k === "LABORATORY_ASSISTANT" || k === "LABORATORY_DIRECTOR";
+  }, [roles]);
+
+  const isLaboratoryRoleSelected = useMemo(() => {
+    const rid = Number(userForm.roleId);
+    return Number.isFinite(rid) && rid > 0 && isLaboratoryRoleId(rid);
+  }, [userForm.roleId, isLaboratoryRoleId]);
+
+  const laboratoriesSorted = useMemo(
+    () => [...laboratories].sort((a, b) => (a.nameUz || "").localeCompare(b.nameUz || "", "uz")),
+    [laboratories],
+  );
 
   const [districtLabelsById, setDistrictLabelsById] = useState<Record<number, string>>({});
   const [loadingDistricts, setLoadingDistricts] = useState(false);
@@ -910,6 +930,7 @@ export default function AdminPanel() {
       roleId: String(row.roleId),
       regionId: "",
       districtId: "",
+      laboratoryId: row.laboratoryId != null && row.laboratoryId > 0 ? String(row.laboratoryId) : "",
     });
     setIsUserDialogOpen(true);
     void fetchUser(row.id)
@@ -925,6 +946,7 @@ export default function AdminPanel() {
           roleId: String(u.roleId),
           regionId: "",
           districtId: "",
+          laboratoryId: u.laboratoryId != null && u.laboratoryId > 0 ? String(u.laboratoryId) : "",
         });
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : "Ma’lumot yuklanmadi"));
@@ -968,6 +990,13 @@ export default function AdminPanel() {
           toast.error("Tumanni tanlang");
           return;
         }
+        if (isLaboratoryRoleId(roleId)) {
+          const lid = Number(userForm.laboratoryId);
+          if (!Number.isFinite(lid) || lid <= 0) {
+            toast.error("Laboratoriyani tanlang");
+            return;
+          }
+        }
         await createUser({
           username: userForm.username.trim(),
           firstName: userForm.firstName.trim(),
@@ -978,6 +1007,9 @@ export default function AdminPanel() {
           roleId,
           regionId,
           districtId,
+          ...(isLaboratoryRoleId(roleId)
+            ? { laboratoryId: Number(userForm.laboratoryId) }
+            : {}),
         });
         toast.success("Foydalanuvchi yaratildi");
       }
@@ -1139,28 +1171,27 @@ export default function AdminPanel() {
                     <Plus className="h-4 w-4 mr-2" />
                     Foydalanuvchi yaratish
                   </Button>
-                  <Dialog
-                  open={isUserDialogOpen}
-                  onOpenChange={(open) => {
-                    setIsUserDialogOpen(open);
-                    if (!open) {
+                  <Modal
+                    open={isUserDialogOpen}
+                    title={editingUser ? "Foydalanuvchini tahrirlash" : "Yangi foydalanuvchi"}
+                    onCancel={() => {
+                      setIsUserDialogOpen(false);
                       setEditingUser(null);
                       setUserForm(emptyUserForm());
-                    }
-                  }}
-                >
-                  <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-                    <DialogHeader>
-                      <DialogTitle>{editingUser ? "Foydalanuvchini tahrirlash" : "Yangi foydalanuvchi"}</DialogTitle>
-                      <DialogDescription>
-                        {editingUser ? "Ma’lumotlarni yangilang" : "Tizimga yangi foydalanuvchi qo‘shish"}
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="userUsername">Login (username)</Label>
-                        <Input
-                          id="userUsername"
+                    }}
+                    footer={null}
+                    width={560}
+                    destroyOnClose
+                    styles={{ body: { maxHeight: "min(90vh, 550px)", overflowY: "auto" } }}
+                  >
+                    <Typography.Paragraph type="secondary" className="!mb-4 !mt-0">
+                      {editingUser ? "Ma’lumotlarni yangilang" : "Tizimga yangi foydalanuvchi qo‘shish"}
+                    </Typography.Paragraph>
+                    <Space direction="vertical" size="middle" className="w-full">
+                      <div className="w-full">
+                        <Typography.Text className="text-sm font-medium">Login (username)</Typography.Text>
+                        <AntInput
+                          className="mt-1"
                           autoComplete="username"
                           placeholder="Masalan: ivanov"
                           value={userForm.username}
@@ -1168,131 +1199,167 @@ export default function AdminPanel() {
                           onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
                         />
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div className="space-y-2">
-                          <Label htmlFor="userFirstName">Ism</Label>
-                          <Input
-                            id="userFirstName"
+                      <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div>
+                          <Typography.Text className="text-sm font-medium">Ism</Typography.Text>
+                          <AntInput
+                            className="mt-1"
                             value={userForm.firstName}
                             onChange={(e) => setUserForm({ ...userForm, firstName: e.target.value })}
                           />
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="userLastName">Familiya</Label>
-                          <Input
-                            id="userLastName"
+                        <div>
+                          <Typography.Text className="text-sm font-medium">Familiya</Typography.Text>
+                          <AntInput
+                            className="mt-1"
                             value={userForm.lastName}
                             onChange={(e) => setUserForm({ ...userForm, lastName: e.target.value })}
                           />
                         </div>
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="userSurname">Otasining ismi</Label>
-                        <Input
-                          id="userSurname"
+                      <div className="w-full">
+                        <Typography.Text className="text-sm font-medium">Otasining ismi</Typography.Text>
+                        <AntInput
+                          className="mt-1"
                           value={userForm.surname}
                           onChange={(e) => setUserForm({ ...userForm, surname: e.target.value })}
                         />
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="userPhone">Telefon</Label>
-                        <Input
-                          id="userPhone"
+                      <div className="w-full">
+                        <Typography.Text className="text-sm font-medium">Telefon</Typography.Text>
+                        <AntInput
+                          className="mt-1"
                           type="tel"
                           placeholder="+998..."
                           value={userForm.phoneNumber}
                           onChange={(e) => setUserForm({ ...userForm, phoneNumber: e.target.value })}
                         />
                       </div>
-                      <div className="space-y-2">
-                        <Label>Rol</Label>
-                        <Select
-                          value={userForm.roleId}
-                          onValueChange={(v) => setUserForm({ ...userForm, roleId: v })}
+                      <div className="w-full">
+                        <Typography.Text className="text-sm font-medium">Rol</Typography.Text>
+                        <AntSelect
+                          className="mt-1 w-full"
+                          placeholder={loadingRoles ? "Yuklanmoqda..." : "Rolni tanlang"}
+                          value={userForm.roleId || undefined}
+                          onChange={(v) =>
+                            setUserForm({ ...userForm, roleId: v != null ? String(v) : "", laboratoryId: "" })
+                          }
                           disabled={loadingRoles}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder={loadingRoles ? "Yuklanmoqda..." : "Rolni tanlang"} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {roles.map((r) => (
-                              <SelectItem key={r.id} value={String(r.id)}>
-                                {roleReferenceLabel(r)}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          loading={loadingRoles}
+                          options={roles.map((r) => ({
+                            value: String(r.id),
+                            label: roleReferenceLabel(r),
+                          }))}
+                          showSearch
+                          optionFilterProp="label"
+                          allowClear
+                        />
                         {roles.length === 0 && !loadingRoles && (
-                          <p className="text-xs text-muted-foreground">Rollar ro‘yxati bo‘sh (GET /roles).</p>
+                          <Typography.Text type="secondary" className="text-xs">
+                            Rollar ro‘yxati bo‘sh (GET /roles).
+                          </Typography.Text>
                         )}
                       </div>
+                      {!editingUser && isLaboratoryRoleSelected && (
+                        <div className="w-full">
+                          <Typography.Text className="text-sm font-medium">Laboratoriya</Typography.Text>
+                          <AntSelect
+                            className="mt-1 w-full"
+                            placeholder={loadingLabs ? "Yuklanmoqda..." : "Laboratoriyani tanlang"}
+                            value={userForm.laboratoryId || undefined}
+                            onChange={(v) =>
+                              setUserForm({ ...userForm, laboratoryId: v != null ? String(v) : "" })
+                            }
+                            disabled={loadingLabs}
+                            loading={loadingLabs}
+                            options={laboratoriesSorted.map((lab) => ({
+                              value: String(lab.id),
+                              label: lab.nameUz?.trim() || `Laboratoriya #${lab.id}`,
+                            }))}
+                            showSearch
+                            optionFilterProp="label"
+                            allowClear
+                          />
+                          {laboratoriesSorted.length === 0 && !loadingLabs && (
+                            <Typography.Text type="secondary" className="text-xs">
+                              Laboratoriyalar ro‘yxati bo‘sh.
+                            </Typography.Text>
+                          )}
+                        </div>
+                      )}
                       {!editingUser && (
                         <>
-                          <div className="space-y-2">
-                            <Label>Viloyat</Label>
-                            <Select
-                              value={userForm.regionId}
-                              onValueChange={(v) => setUserForm({ ...userForm, regionId: v, districtId: "" })}
+                          <div className="w-full">
+                            <Typography.Text className="text-sm font-medium">Viloyat</Typography.Text>
+                            <AntSelect
+                              className="mt-1 w-full"
+                              placeholder={loadingRefGeo ? "Yuklanmoqda..." : "Viloyatni tanlang"}
+                              value={userForm.regionId || undefined}
+                              onChange={(v) =>
+                                setUserForm({
+                                  ...userForm,
+                                  regionId: v != null ? String(v) : "",
+                                  districtId: "",
+                                })
+                              }
                               disabled={loadingRefGeo}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder={loadingRefGeo ? "Yuklanmoqda..." : "Viloyatni tanlang"} />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {regions.map((r) => (
-                                  <SelectItem key={r.id} value={String(r.id)}>
-                                    {referenceLatLabel(r)}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                              loading={loadingRefGeo}
+                              options={regions.map((r) => ({
+                                value: String(r.id),
+                                label: referenceLatLabel(r),
+                              }))}
+                              showSearch
+                              optionFilterProp="label"
+                              allowClear
+                            />
                           </div>
-                          <div className="space-y-2">
-                            <Label>Tuman</Label>
-                            <Select
-                              value={userForm.districtId}
-                              onValueChange={(v) => setUserForm({ ...userForm, districtId: v })}
+                          <div className="w-full">
+                            <Typography.Text className="text-sm font-medium">Tuman</Typography.Text>
+                            <AntSelect
+                              className="mt-1 w-full"
+                              placeholder={
+                                !userForm.regionId
+                                  ? "Avval viloyatni tanlang"
+                                  : loadingUserDistricts
+                                    ? "Yuklanmoqda..."
+                                    : "Tumanni tanlang"
+                              }
+                              value={userForm.districtId || undefined}
+                              onChange={(v) =>
+                                setUserForm({ ...userForm, districtId: v != null ? String(v) : "" })
+                              }
                               disabled={loadingUserDistricts || !userForm.regionId}
-                            >
-                              <SelectTrigger>
-                                <SelectValue
-                                  placeholder={
-                                    !userForm.regionId
-                                      ? "Avval viloyatni tanlang"
-                                      : loadingUserDistricts
-                                        ? "Yuklanmoqda..."
-                                        : "Tumanni tanlang"
-                                  }
-                                />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {userDistricts.map((d) => (
-                                  <SelectItem key={d.id} value={String(d.id)}>
-                                    {referenceLatLabel(d)}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                              loading={loadingUserDistricts}
+                              options={userDistricts.map((d) => ({
+                                value: String(d.id),
+                                label: referenceLatLabel(d),
+                              }))}
+                              showSearch
+                              optionFilterProp="label"
+                              allowClear
+                            />
                           </div>
                         </>
                       )}
-                      <div className="space-y-2">
-                        <Label htmlFor="userPassword">{editingUser ? "Yangi parol (ixtiyoriy)" : "Parol"}</Label>
-                        <Input
-                          id="userPassword"
-                          type="password"
-                          autoComplete={editingUser ? "new-password" : "new-password"}
-                          placeholder={editingUser ? "Bo‘sh qoldiring, agar o‘zgartirmasangiz" : "Parolni kiriting"}
+                      <div className="w-full">
+                        <Typography.Text className="text-sm font-medium">
+                          {editingUser ? "Yangi parol (ixtiyoriy)" : "Parol"}
+                        </Typography.Text>
+                        <AntInput.Password
+                          className="mt-1"
+                          autoComplete="new-password"
+                          placeholder={
+                            editingUser ? "Bo‘sh qoldiring, agar o‘zgartirmasangiz" : "Parolni kiriting"
+                          }
                           value={userForm.password}
                           onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
                         />
                       </div>
-                      <Button onClick={() => void handleSaveUser()} className="w-full bg-blue-600 hover:bg-blue-700">
+                      <AntdButton type="primary" block onClick={() => void handleSaveUser()}>
                         {editingUser ? "Saqlash" : "Foydalanuvchi yaratish"}
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                      </AntdButton>
+                    </Space>
+                  </Modal>
                 </div>
               </div>
             </CardHeader>

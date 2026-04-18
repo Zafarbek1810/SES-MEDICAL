@@ -12,7 +12,12 @@ export type EnumsData = {
   orderTypes: EnumEntry[];
   paymentStatuses: EnumEntry[];
   paymentTypes: EnumEntry[];
+  /** Karta turi: UZCARD, HUMO, VISA — to‘lov CARD bo‘lganda `cardId` */
+  cardTypes: EnumEntry[];
   sampleTypes: EnumEntry[];
+  /** Namuna obyekti turi: HUMAN / OBJECT va hokazo */
+  sampleObjectType: EnumEntry[];
+  humanSexes: EnumEntry[];
   /** San minimum kurs holati (GET /san-minimums?courseState=…) */
   courseStates: EnumEntry[];
   /** San minimum to‘lovi: pullik / bepul */
@@ -25,7 +30,10 @@ const emptyEnums = (): EnumsData => ({
   orderTypes: [],
   paymentStatuses: [],
   paymentTypes: [],
+  cardTypes: [],
   sampleTypes: [],
+  sampleObjectType: [],
+  humanSexes: [],
   courseStates: [],
   sanPaymentTypes: [],
 });
@@ -65,7 +73,10 @@ export async function fetchEnums(): Promise<EnumsData> {
     orderTypes: parseEnumArray(raw, "orderTypes"),
     paymentStatuses: parseEnumArray(raw, "paymentStatuses"),
     paymentTypes: parseEnumArray(raw, "paymentTypes"),
+    cardTypes: parseEnumArray(raw, "cardTypes"),
     sampleTypes: parseEnumArray(raw, "sampleTypes"),
+    sampleObjectType: parseEnumArray(raw, "sampleObjectType"),
+    humanSexes: parseEnumArray(raw, "humanSexes"),
     courseStates: parseEnumArray(raw, "courseStates"),
     sanPaymentTypes: parseEnumArray(raw, "sanPaymentTypes"),
   };

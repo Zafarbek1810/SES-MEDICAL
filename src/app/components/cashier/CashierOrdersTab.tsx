@@ -144,6 +144,8 @@ type OrderFormState = {
   patientId: string;
   sampleId: string;
   paymentType: string;
+  /** GET /enums `cardTypes` — faqat to‘lov turi CARD bo‘lganda */
+  cardId: string;
   paymentStatus: string;
   details: DetailFormRow[];
 };
@@ -162,6 +164,7 @@ function defaultForm(enums: EnumsData | null): OrderFormState {
     patientId: "",
     sampleId: "",
     paymentType: pt !== undefined ? String(pt) : "",
+    cardId: "",
     paymentStatus: ps !== undefined ? String(ps) : "",
     details: [emptyDetailRow()],
   };
@@ -187,6 +190,7 @@ function orderToForm(o: OrderDto): OrderFormState {
     patientId: String(patientOrSanId ?? ""),
     sampleId: String(o.sampleId),
     paymentType: String(o.paymentType),
+    cardId: o.cardId != null && o.cardId > 0 ? String(o.cardId) : "",
     paymentStatus: String(o.paymentStatus),
     details:
       o.details.length > 0
@@ -207,7 +211,8 @@ function formToBody(
     isSanMinimumOrder: boolean;
     useSanMinimumPicker: boolean;
   },
-  priceByAnalysisId: Map<number, number>
+  priceByAnalysisId: Map<number, number>,
+  enums: EnumsData | null,
 ): SaveOrderBody | null {
   const orderType = Number(f.orderType);
   const laboratoryId = Number(f.laboratoryId);
@@ -337,6 +342,17 @@ function formToBody(
     paymentStatus,
     details,
   };
+
+  const paymentTypeName =
+    enums?.paymentTypes.find((x) => x.value === paymentType)?.name?.trim().toUpperCase() ?? "";
+  if (paymentTypeName === "CARD") {
+    const cardId = Number(f.cardId);
+    if (!Number.isFinite(cardId) || cardId <= 0) {
+      toast.error("Karta turini tanlang");
+      return null;
+    }
+    baseBody.cardId = cardId;
+  }
 
   // SAN_MINIMUM uchun kurs va umumiy chegirma, sanMinimumId ni ham biriktiramiz
   if (mode.isSanMinimumOrder) {
@@ -469,22 +485,6 @@ export default function CashierOrdersTab() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoadingAnalyses(true);
-    fetchAnalyses()
-      .then((rows) => {
-        if (!cancelled) setAnalyses(rows);
-      })
-      .catch((e) => toast.error(e instanceof Error ? e.message : "Tahlillar yuklanmadi"))
-      .finally(() => {
-        if (!cancelled) setLoadingAnalyses(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
     setLoadingLaboratories(true);
     fetchLaboratories()
       .then((rows) => {
@@ -593,6 +593,13 @@ export default function CashierOrdersTab() {
   const isHumanOrder = selectedOrderTypeName === "HUMAN";
   const isObjectOrder = selectedOrderTypeName === "OBJECT";
   const isSanMinimumOrder = selectedOrderTypeName === "SAN_MINIMUM";
+  const selectedPaymentTypeName = useMemo(() => {
+    const v = Number(form.paymentType);
+    if (!Number.isFinite(v)) return "";
+    const hit = enums?.paymentTypes.find((x) => x.value === v);
+    return hit?.name?.trim().toUpperCase() ?? "";
+  }, [enums, form.paymentType]);
+  const isCardPayment = selectedPaymentTypeName === "CARD";
   const selectedLaboratory = useMemo(() => {
     const n = Number(form.laboratoryId);
     if (!Number.isFinite(n) || n <= 0) return null;
@@ -614,6 +621,41 @@ export default function CashierOrdersTab() {
     if (!selectedLaboratoryId) return [];
     return analyses.filter((a) => Number(a.laboratoryId) === selectedLaboratoryId);
   }, [analyses, selectedLaboratoryId]);
+
+  /** SAN_MINIMUM da `form.laboratoryId` kurs ID — analizlar `/analyses/admin` uchun `laboratoryId` filter orqali olinadi */
+  const analysesFetchLaboratoryId = useMemo(() => {
+    if (isSanMinimumOrder) return null;
+    return selectedLaboratoryId;
+  }, [isSanMinimumOrder, selectedLaboratoryId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (analysesFetchLaboratoryId == null) {
+      setAnalyses([]);
+      setLoadingAnalyses(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setLoadingAnalyses(true);
+    fetchAnalyses({ laboratoryId: analysesFetchLaboratoryId })
+      .then((rows) => {
+        if (!cancelled) setAnalyses(rows);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "Tahlillar yuklanmadi");
+          setAnalyses([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingAnalyses(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [analysesFetchLaboratoryId]);
+
   useEffect(() => {
     // SAN_MINIMUM + kurs tanlanganda kurs narxini olish
     if (!dialogOpen || !isSanMinimumOrder) {
@@ -787,7 +829,8 @@ export default function CashierOrdersTab() {
     const body = formToBody(
       form,
       { isHumanOrder, isObjectOrder, isSanMinimumOrder, useSanMinimumPicker },
-      priceByAnalysisId
+      priceByAnalysisId,
+      enums,
     );
     if (!body) return;
     setSaving(true);
@@ -1421,7 +1464,16 @@ export default function CashierOrdersTab() {
                     className="w-full"
                     placeholder="Tanlang"
                     value={form.paymentType || undefined}
-                    onChange={(v) => setForm({ ...form, paymentType: v ?? "" })}
+                    onChange={(v) => {
+                      const next = v ?? "";
+                      const payName =
+                        enums?.paymentTypes.find((x) => String(x.value) === next)?.name?.trim().toUpperCase() ?? "";
+                      setForm((prev) => ({
+                        ...prev,
+                        paymentType: next,
+                        cardId: payName === "CARD" ? prev.cardId : "",
+                      }));
+                    }}
                     options={(enums?.paymentTypes ?? []).map((e) => ({
                       value: String(e.value),
                       label: enumEntryDisplayLabel(e),
@@ -1430,6 +1482,25 @@ export default function CashierOrdersTab() {
                     optionFilterProp="label"
                   />
                 </div>
+                {isCardPayment ? (
+                  <div className="flex flex-col gap-1">
+                    <Typography.Text>Karta turi</Typography.Text>
+                    <AntSelect
+                      className="w-full"
+                      placeholder={loadingEnums ? "…" : "Tanlang"}
+                      loading={loadingEnums}
+                      disabled={loadingEnums}
+                      value={form.cardId || undefined}
+                      onChange={(v) => setForm({ ...form, cardId: v ?? "" })}
+                      options={(enums?.cardTypes ?? []).map((e) => ({
+                        value: String(e.value),
+                        label: enumEntryDisplayLabel(e),
+                      }))}
+                      showSearch
+                      optionFilterProp="label"
+                    />
+                  </div>
+                ) : null}
                 <div className="flex flex-col gap-1">
                   <Typography.Text>To‘lov holati</Typography.Text>
                   <AntSelect
@@ -1771,9 +1842,6 @@ export default function CashierOrdersTab() {
                       <p className="text-xs text-amber-600">
                         {amountSummary.missingPriceCount} ta tahlil uchun narx topilmadi, summaga qo‘shilmadi.
                       </p>
-                    )}
-                    {analyses.length === 0 && !loadingAnalyses && (
-                      <p className="text-xs text-muted-foreground">Tahlillar ro‘yxati bo‘sh (GET /analyses/admin).</p>
                     )}
                   </>
                 )}

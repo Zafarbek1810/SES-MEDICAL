@@ -10,6 +10,8 @@ export type UserDto = {
   roleId: number;
   regionId?: number;
   districtId?: number;
+  /** Laborant / laboratoriya direktori uchun */
+  laboratoryId?: number;
   /** Backend qaytarsa (masalan `enabled`, `active`) */
   active?: boolean;
 };
@@ -32,6 +34,8 @@ export type CreateUserBody = {
   roleId: number;
   regionId: number;
   districtId: number;
+  /** Laboratoriya assistenti / laboratoriya direktori rollari uchun */
+  laboratoryId?: number;
 };
 
 export type UpdateUserBody = {
@@ -135,7 +139,26 @@ function syntheticDtoFromCreateBody(body: CreateUserBody): UserDto {
     roleId: body.roleId,
     regionId: body.regionId,
     districtId: body.districtId,
+    ...(body.laboratoryId !== undefined && body.laboratoryId > 0 ? { laboratoryId: body.laboratoryId } : {}),
   };
+}
+
+function buildCreateUserPayload(body: CreateUserBody): Record<string, unknown> {
+  const o: Record<string, unknown> = {
+    username: body.username,
+    firstName: body.firstName,
+    lastName: body.lastName,
+    surname: body.surname,
+    password: body.password,
+    phoneNumber: body.phoneNumber,
+    roleId: body.roleId,
+    regionId: body.regionId,
+    districtId: body.districtId,
+  };
+  if (body.laboratoryId !== undefined && Number.isFinite(body.laboratoryId) && body.laboratoryId > 0) {
+    o.laboratoryId = body.laboratoryId;
+  }
+  return o;
 }
 
 /** Server faqat qisman maydon qaytarsa — qolganini yuborilgan body bilan to‘ldiramiz */
@@ -147,6 +170,13 @@ function mergeUserDtoFromCreate(raw: unknown, body: CreateUserBody): UserDto | n
   const id = toNum(o.id ?? o.Id ?? o.ID) ?? extractCreatedIdDeep(raw);
   if (id === undefined) return null;
   const roleId = roleIdFromObject(o) ?? body.roleId;
+  const labFromApi = toNum(o.laboratoryId ?? o.laboratory_id);
+  const labId =
+    labFromApi !== undefined && labFromApi > 0
+      ? labFromApi
+      : body.laboratoryId !== undefined && body.laboratoryId > 0
+        ? body.laboratoryId
+        : undefined;
   return {
     id,
     username: toStr(o.username ?? o.user_name) || body.username,
@@ -157,6 +187,7 @@ function mergeUserDtoFromCreate(raw: unknown, body: CreateUserBody): UserDto | n
     roleId,
     regionId: toNum(o.regionId ?? o.region_id) ?? body.regionId,
     districtId: toNum(o.districtId ?? o.district_id) ?? body.districtId,
+    ...(labId !== undefined && labId > 0 ? { laboratoryId: labId } : {}),
     active: toActive(o),
   };
 }
@@ -168,6 +199,7 @@ function mergeUserDtoPartial(raw: unknown, fallbackId: number): UserDto | null {
   const o = u as Record<string, unknown>;
   const id = toNum(o.id) ?? fallbackId;
   const roleId = roleIdFromObject(o) ?? 0;
+  const labP = toNum(o.laboratoryId ?? o.laboratory_id);
   return {
     id,
     username: toStr(o.username ?? o.user_name) || "—",
@@ -178,6 +210,7 @@ function mergeUserDtoPartial(raw: unknown, fallbackId: number): UserDto | null {
     roleId,
     regionId: toNum(o.regionId ?? o.region_id),
     districtId: toNum(o.districtId ?? o.district_id),
+    ...(labP !== undefined && labP > 0 ? { laboratoryId: labP } : {}),
     active: toActive(o),
   };
 }
@@ -212,6 +245,7 @@ export function normalizeUserDto(raw: unknown): UserDto | null {
   const roleIdFromNested = roleNested ? toNum(roleNested.id) : undefined;
   const roleId = toNum(o.roleId ?? o.role_id) ?? roleIdFromNested;
   if (id === undefined || roleId === undefined) return null;
+  const labU = toNum(o.laboratoryId ?? o.laboratory_id);
   return {
     id,
     username: toStr(o.username ?? o.user_name) || "—",
@@ -222,6 +256,7 @@ export function normalizeUserDto(raw: unknown): UserDto | null {
     roleId,
     regionId: toNum(o.regionId ?? o.region_id),
     districtId: toNum(o.districtId ?? o.district_id),
+    ...(labU !== undefined && labU > 0 ? { laboratoryId: labU } : {}),
     active: toActive(o),
   };
 }
@@ -268,7 +303,7 @@ export async function fetchUser(id: number): Promise<UserDto> {
 export async function createUser(body: CreateUserBody): Promise<UserDto> {
   const res = await apiFetch<unknown>("/auth/register", {
     method: "POST",
-    body: JSON.stringify(body),
+    body: JSON.stringify(buildCreateUserPayload(body)),
   });
   /** 204 yoki bo‘sh javob — apiFetch `undefined` qaytaradi */
   if (res === undefined || res === null) {

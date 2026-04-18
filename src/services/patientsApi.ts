@@ -4,6 +4,8 @@ export type SavePatientBody = {
   firstName: string;
   lastName: string;
   surname: string;
+  /** 1 — erkak, 0 — ayol */
+  sex: 0 | 1;
   regionId: number;
   districtId: number;
   villageId: number;
@@ -81,11 +83,15 @@ export function normalizePatient(raw: unknown): PatientDto | null {
     o.positionIndustryId ?? o.position_industry_id ?? o.industryId ?? o.industry_id,
   );
   const positionNameRaw = toStr(o.positionName ?? o.position_name);
+  const sexRaw = toNum(o.sex ?? o.gender);
+  const sex: 0 | 1 = sexRaw === 1 ? 1 : 0;
+
   const base: PatientDto = {
     id,
     firstName: toStr(o.firstName ?? o.first_name),
     lastName: toStr(o.lastName ?? o.last_name),
     surname: toStr(o.surname ?? o.middle_name ?? o.middleName ?? o.patronymic),
+    sex,
     regionId: toNum(o.regionId ?? o.region_id) ?? 0,
     districtId: toNum(o.districtId ?? o.district_id) ?? 0,
     villageId: toNum(o.villageId ?? o.village_id) ?? 0,

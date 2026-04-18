@@ -14,7 +14,6 @@ import {
   enumEntryDisplayLabel,
   enumLabel,
   type EnumsData,
-  type EnumEntry,
 } from "../../services/enumsApi";
 import { fetchLaboratories, type LaboratoryDto } from "../../services/laboratoriesApi";
 import { fetchAnalyses, type AnalysisDto } from "../../services/analysesApi";
@@ -24,6 +23,10 @@ import {
   type OrderDetailListFilters,
 } from "../../services/orderDetailsListApi";
 import { formatTableDateTime } from "../../utils/tableDateFormat";
+import {
+  analysisStateToBadgeStatus,
+  getAnalysisStateEntry,
+} from "../../utils/analysisStateForBadge";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -46,67 +49,6 @@ function objectFio(row: OrderDetailListItem): string {
 
 function money(n: number) {
   return new Intl.NumberFormat("uz-UZ", { maximumFractionDigits: 0 }).format(Math.max(0, n));
-}
-
-function getAnalysisStateEntry(enums: EnumsData | null, value: number): EnumEntry | undefined {
-  return enums?.analysisStates?.find((e) => e.value === value);
-}
-
-/**
- * `StatusBadge` ranglari: enum `name` / `labelUz` va `value` (14/24/34/44).
- * 14 PENDING → Jarayonda, 24 RESULT_READY → Kutilmoqda, 34 APPROVED → Tasdiqlangan, 44 REJECTED.
- */
-function analysisStateToBadgeStatus(
-  enums: EnumsData | null,
-  value: number
-): "Pending" | "In Progress" | "Completed" | "Rejected" {
-  const entry = getAnalysisStateEntry(enums, value);
-  const name = (entry?.name ?? "").trim().toUpperCase();
-  const label = (entry?.labelUz ?? "").trim().toLowerCase();
-
-  if (name === "REJECTED" || /rad etilgan/.test(label)) return "Rejected";
-
-  const completedNames = new Set([
-    "COMPLETED",
-    "APPROVED",
-    "DONE",
-    "RETURNED",
-    "PAID",
-    "FINISHED",
-    "SUCCESS",
-    "CLOSED",
-    "READY",
-  ]);
-  if (completedNames.has(name)) return "Completed";
-  if (
-    /tasdiqlangan|bajaril|tasdiql|tugall|yakun|tayyor| chiqarildi/.test(label) &&
-    name !== "RESULT_READY"
-  ) {
-    return "Completed";
-  }
-
-  const inProgressNames = new Set([
-    "PENDING",
-    "IN_PROGRESS",
-    "PROCESSING",
-    "RUNNING",
-    "WAITING",
-    "ASSIGNED",
-    "STARTED",
-  ]);
-  if (name === "PENDING" || inProgressNames.has(name)) return "In Progress";
-  if (/jarayonda/.test(label)) return "In Progress";
-
-  if (name === "RESULT_READY" || /kutilmoqda/.test(label)) return "Pending";
-
-  if (!entry) {
-    if (value === 34) return "Completed";
-    if (value === 44) return "Rejected";
-    if (value === 14) return "In Progress";
-    if (value === 24) return "Pending";
-  }
-
-  return "Pending";
 }
 
 function isAnalysisApproved(enums: EnumsData | null, analysisStatusValue: number): boolean {

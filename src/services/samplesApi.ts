@@ -1,6 +1,10 @@
 import { apiFetch, unwrapList } from "./apiHttp";
 
 export type SaveSampleBody = {
+  objectName: string;
+  /** GET /enums → `sampleObjectType` (masalan 33 — HUMAN, 44 — OBJECT) */
+  sampleObjectType: number;
+  patientId: number;
   sampleType: number;
   name: string;
   description: string;
@@ -57,6 +61,9 @@ export function normalizeSample(raw: unknown): SampleDto | null {
   if (id === undefined) return null;
   return {
     id,
+    objectName: toStr(o.objectName ?? o.object_name),
+    sampleObjectType: toNum(o.sampleObjectType ?? o.sample_object_type) ?? 0,
+    patientId: toNum(o.patientId ?? o.patient_id) ?? 0,
     sampleType: toNum(o.sampleType ?? o.sample_type) ?? 0,
     name: toStr(o.name),
     description: toStr(o.description),

@@ -38,8 +38,17 @@ export function normalizeAnalysisDto(raw: unknown): AnalysisDto | null {
   };
 }
 
-export async function fetchAnalyses(): Promise<AnalysisDto[]> {
-  const raw = await apiFetch<unknown>("/analyses/admin", { method: "GET" });
+/**
+ * Har doim admin ro‘yxat endpointi ishlatiladi: GET `/analyses/admin`.
+ * `laboratoryId` berilsa, query sifatida qo‘shiladi: `/analyses/admin?laboratoryId=...`.
+ */
+export async function fetchAnalyses(options?: { laboratoryId?: number }): Promise<AnalysisDto[]> {
+  const labId = options?.laboratoryId;
+  const query =
+    labId != null && Number.isFinite(labId) && labId > 0
+      ? `?laboratoryId=${encodeURIComponent(String(labId))}`
+      : "";
+  const raw = await apiFetch<unknown>(`/analyses/admin${query}`, { method: "GET" });
   const rows = unwrapList<unknown>(raw);
   return rows.map(normalizeAnalysisDto).filter((x): x is AnalysisDto => x !== null);
 }

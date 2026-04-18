@@ -8,6 +8,7 @@ import SanMinimumPage from "./pages/SanMinimumPage";
 import SanMinimumStatsPage from "./pages/SanMinimumStatsPage";
 import LaborantDashboard from "./pages/LaborantDashboard";
 import LabDirectorDashboard from "./pages/LabDirectorDashboard";
+import LabDirectorAnalysesPage from "./pages/LabDirectorAnalysesPage";
 import CompanyDirectorDashboard from "./pages/CompanyDirectorDashboard";
 import AdminPanel from "./pages/AdminPanel";
 import EmployeesPage from "./pages/EmployeesPage";
@@ -67,6 +68,14 @@ export const router = createBrowserRouter([
       {
         path: "lab-director",
         Component: LabDirectorDashboard,
+      },
+      {
+        path: "lab-director/analyses",
+        Component: LabDirectorAnalysesPage,
+      },
+      {
+        path: "lab-director/analysis/:id",
+        Component: AnalysisDetail,
       },
       {
         path: "company-director",

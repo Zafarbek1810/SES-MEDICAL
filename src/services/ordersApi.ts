@@ -75,6 +75,8 @@ export type OrderDto = {
   /** Backenddan keladigan umumiy narx */
   amount?: number;
   paymentType: number;
+  /** Karta to‘lovi (GET /enums cardTypes) */
+  cardId?: number | null;
   paymentStatus: number;
   /** Backend qaytarsa */
   orderState?: number;
@@ -315,6 +317,7 @@ export function normalizeOrder(raw: unknown): OrderDto | null {
   const sanMinimumLastName = toStrNull(o.sanMinimumLastName ?? o.san_minimum_last_name);
   const patientPhoneNumber = toStrNull(o.patientPhoneNumber ?? o.patient_phone_number);
   const sanMinimumPhoneNumber = toStrNull(o.sanMinimumPhoneNumber ?? o.san_minimum_phone_number);
+  const cardIdParsed = toNum(o.cardId ?? o.card_id);
 
   return {
     id,
@@ -339,6 +342,7 @@ export function normalizeOrder(raw: unknown): OrderDto | null {
     ...(districtNameUz ? { districtNameUz } : {}),
     amount: toNum(o.amount ?? o.totalAmount ?? o.total_amount),
     paymentType: toNum(o.paymentType ?? o.payment_type) ?? 0,
+    ...(cardIdParsed !== undefined && cardIdParsed > 0 ? { cardId: cardIdParsed } : {}),
     paymentStatus: toNum(o.paymentStatus ?? o.payment_status) ?? 0,
     orderState: toNum(o.orderState ?? o.order_state ?? o.state),
     createdDate: parseCreatedDate(o),
@@ -404,6 +408,7 @@ function fallbackOrderFromBody(id: number, body: SaveOrderBody): OrderDto {
     sampleId: body.sampleId ?? 0,
     ...(body.sanMinimumId != null && body.sanMinimumId > 0 ? { sanMinimumId: body.sanMinimumId } : {}),
     paymentType: body.paymentType,
+    ...(body.cardId != null && body.cardId > 0 ? { cardId: body.cardId } : {}),
     paymentStatus: body.paymentStatus,
     details: body.details.map((d) => ({ ...d })),
   };

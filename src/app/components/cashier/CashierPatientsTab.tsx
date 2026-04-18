@@ -13,6 +13,8 @@ import {
   Space,
   Switch,
   InputNumber,
+  Divider,
+  Checkbox,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
@@ -20,7 +22,12 @@ import { toast } from "sonner";
 import { formatTableDate } from "../../../utils/tableDateFormat";
 import type { ReferenceItem } from "../../../services/referenceDataApi";
 import { fetchRegions, fetchDistricts, fetchVillages } from "../../../services/referenceDataApi";
-import { fetchWorkplaces, fetchWorkplacesAdmin, type WorkplaceDto } from "../../../services/workplacesApi";
+import {
+  fetchWorkplaces,
+  fetchWorkplacesAdmin,
+  fetchWorkplacesByUserLocationPage,
+  type WorkplaceDto,
+} from "../../../services/workplacesApi";
 import {
   fetchSpIndustries,
   fetchSpPositions,
@@ -36,9 +43,19 @@ import {
   type PatientDto,
   type SavePatientBody,
 } from "../../../services/patientsApi";
+import { createSample, type SaveSampleBody } from "../../../services/samplesApi";
+import { enumEntryDisplayLabel, getEnums, type EnumsData } from "../../../services/enumsApi";
 
 const UZ_PHONE_PREFIX = "+998";
 const PHONE_LOCAL_DIGITS = 9;
+
+/** GET /enums da yo‘q bo‘lsa — fuqaro asosidagi namuna (HUMAN) */
+const HUMAN_SAMPLE_OBJECT_TYPE_FALLBACK = 33;
+
+function humanSampleObjectTypeValue(enums: EnumsData | null): number {
+  const hit = enums?.sampleObjectType.find((e) => e.name?.trim().toUpperCase() === "HUMAN");
+  return hit != null && Number.isFinite(hit.value) ? hit.value : HUMAN_SAMPLE_OBJECT_TYPE_FALLBACK;
+}
 
 /** API / forma: to‘liq raqamdan +998 keyingi 9 ta raqam */
 function parseLocalDigitsFromStored(phone: string): string {
@@ -64,6 +81,12 @@ function referenceNameLatLabel(item: ReferenceItem): string {
   return nameLat?.trim() || referenceLabel(item);
 }
 
+function patientSexLabel(sex: number | undefined): string {
+  if (sex === 1) return "Erkak";
+  if (sex === 0) return "Ayol";
+  return "—";
+}
+
 type PatientFormState = {
   firstName: string;
   lastName: string;
@@ -79,13 +102,26 @@ type PatientFormState = {
   birthDay: string;
   /** +998 dan keyingi aynan 9 ta raqam (prefiks alohida ko‘rsatiladi) */
   phoneLocalDigits: string;
+  /** API: 1 — erkak, 0 — ayol; `null` — tanlanmagan */
+  sex: 0 | 1 | null;
   address: string;
   privilege: string;
   comment: string;
   isSendSms: boolean;
+  /** Faqat yangi bemor: ketma-ket POST /samples — GET /enums `sampleTypes` */
+  sampleObjectName: string;
+  sampleType: string;
+  sampleName: string;
+  sampleDescription: string;
+  sampleSourceName: string;
+  sampleSourceAddress: string;
+  sampleCollectedDate: string;
+  sampleDateSubmissionLaboratory: string;
+  /** Faqat yangi bemor: belgilansa namuna POST qilinadi va maydonlar ko‘rinadi */
+  createSampleWithPatient: boolean;
 };
 
-function emptyForm(): PatientFormState {
+function emptyForm(enums: EnumsData | null): PatientFormState {
   return {
     firstName: "",
     lastName: "",
@@ -98,10 +134,20 @@ function emptyForm(): PatientFormState {
     positionId: "",
     birthDay: "",
     phoneLocalDigits: "",
+    sex: null,
     address: "",
     privilege: "0",
     comment: "",
     isSendSms: true,
+    sampleObjectName: "",
+    sampleType: enums?.sampleTypes[0] ? String(enums.sampleTypes[0].value) : "",
+    sampleName: "",
+    sampleDescription: "",
+    sampleSourceName: "",
+    sampleSourceAddress: "",
+    sampleCollectedDate: "",
+    sampleDateSubmissionLaboratory: "",
+    createSampleWithPatient: false,
   };
 }
 
@@ -118,16 +164,30 @@ function patientToForm(p: PatientDto): PatientFormState {
     positionId: p.positionId > 0 ? String(p.positionId) : "",
     birthDay: p.birthDay,
     phoneLocalDigits: parseLocalDigitsFromStored(p.phoneNumber),
+    sex: p.sex === 0 || p.sex === 1 ? p.sex : null,
     address: p.address,
     privilege: String(p.privilege),
     comment: p.comment,
     isSendSms: p.isSendSms,
+    sampleObjectName: "",
+    sampleType: "",
+    sampleName: "",
+    sampleDescription: "",
+    sampleSourceName: "",
+    sampleSourceAddress: "",
+    sampleCollectedDate: "",
+    sampleDateSubmissionLaboratory: "",
+    createSampleWithPatient: false,
   };
 }
 
 function formToBody(f: PatientFormState): SavePatientBody | null {
   if (!f.firstName.trim() || !f.lastName.trim()) {
     toast.error("Ism va familiya majburiy");
+    return null;
+  }
+  if (f.sex !== 0 && f.sex !== 1) {
+    toast.error("Jinsni tanlang");
     return null;
   }
   const regionId = Number(f.regionId);
@@ -173,6 +233,7 @@ function formToBody(f: PatientFormState): SavePatientBody | null {
     firstName: f.firstName.trim(),
     lastName: f.lastName.trim(),
     surname: f.surname.trim(),
+    sex: f.sex,
     regionId,
     districtId,
     villageId,
@@ -187,6 +248,57 @@ function formToBody(f: PatientFormState): SavePatientBody | null {
   };
 }
 
+/** Yangi bemor yaratilgandan keyin: viloyat/tuman bemor bilan umumiy */
+function sampleFormToBody(f: PatientFormState, patientId: number, enums: EnumsData | null): SaveSampleBody | null {
+  const sampleType = Number(f.sampleType);
+  const regionId = Number(f.regionId);
+  const districtId = Number(f.districtId);
+
+  if (!f.sampleObjectName.trim()) {
+    toast.error("Namuna: obyekt nomini kiriting");
+    return null;
+  }
+  if (!Number.isFinite(sampleType)) {
+    toast.error("Namuna turini tanlang");
+    return null;
+  }
+  if (!f.sampleName.trim()) {
+    toast.error("Namuna nomini kiriting");
+    return null;
+  }
+  if (!Number.isFinite(regionId) || regionId <= 0) {
+    toast.error("Namuna uchun viloyat: yuqoridagi bemor maydonidan tanlang");
+    return null;
+  }
+  if (!Number.isFinite(districtId) || districtId <= 0) {
+    toast.error("Namuna uchun tuman: yuqoridagi bemor maydonidan tanlang");
+    return null;
+  }
+  if (!f.sampleCollectedDate.trim()) {
+    toast.error("Namuna: olingan sana va vaqtni tanlang");
+    return null;
+  }
+  if (!f.sampleDateSubmissionLaboratory.trim()) {
+    toast.error("Namuna: laboratoriyaga taqdim etilgan sana va vaqtni tanlang");
+    return null;
+  }
+
+  return {
+    objectName: f.sampleObjectName.trim(),
+    sampleObjectType: humanSampleObjectTypeValue(enums),
+    patientId,
+    sampleType,
+    name: f.sampleName.trim(),
+    description: f.sampleDescription.trim(),
+    sourceName: f.sampleSourceName.trim(),
+    sourceAddress: f.sampleSourceAddress.trim(),
+    regionId,
+    districtId,
+    collectedDate: f.sampleCollectedDate.trim(),
+    dateSubmissionLaboratory: f.sampleDateSubmissionLaboratory.trim(),
+  };
+}
+
 export default function CashierPatientsTab() {
   const [patients, setPatients] = useState<PatientDto[]>([]);
   const [page, setPage] = useState(0);
@@ -197,15 +309,20 @@ export default function CashierPatientsTab() {
   const [regions, setRegions] = useState<ReferenceItem[]>([]);
   const [districts, setDistricts] = useState<ReferenceItem[]>([]);
   const [villages, setVillages] = useState<ReferenceItem[]>([]);
+  /** Jadvalda ish joyi nomini ko‘rsatish (admin ro‘yxat) */
   const [workplaces, setWorkplaces] = useState<WorkplaceDto[]>([]);
+  /** Dialog: GET /workplaces/by-user-location (birinchi sahifa, 100 ta) */
+  const [dialogWorkplaces, setDialogWorkplaces] = useState<WorkplaceDto[]>([]);
+  const [loadingDialogWorkplaces, setLoadingDialogWorkplaces] = useState(false);
   const [spIndustries, setSpIndustries] = useState<SpIndustryDto[]>([]);
   const [spPositions, setSpPositions] = useState<SpPositionDto[]>([]);
   const [loadingSpPositions, setLoadingSpPositions] = useState(false);
   const [loadingRef, setLoadingRef] = useState(true);
+  const [enums, setEnums] = useState<EnumsData | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState<PatientFormState>(emptyForm);
+  const [form, setForm] = useState<PatientFormState>(() => emptyForm(null));
   const [saving, setSaving] = useState(false);
   const [loadingDistricts, setLoadingDistricts] = useState(false);
   const [loadingVillages, setLoadingVillages] = useState(false);
@@ -218,10 +335,10 @@ export default function CashierPatientsTab() {
   const showOrphanVillage =
     Number.isFinite(orphanVillageId) && orphanVillageId > 0 && !villageSelectIds.has(orphanVillageId);
 
-  const workplaceSelectIds = useMemo(() => new Set(workplaces.map((w) => w.id)), [workplaces]);
+  const dialogWorkplaceSelectIds = useMemo(() => new Set(dialogWorkplaces.map((w) => w.id)), [dialogWorkplaces]);
   const orphanWorkplaceId = Number(form.workplaceId);
   const showOrphanWorkplace =
-    Number.isFinite(orphanWorkplaceId) && orphanWorkplaceId > 0 && !workplaceSelectIds.has(orphanWorkplaceId);
+    Number.isFinite(orphanWorkplaceId) && orphanWorkplaceId > 0 && !dialogWorkplaceSelectIds.has(orphanWorkplaceId);
 
   const positionSelectIds = useMemo(() => new Set(spPositions.map((p) => p.id)), [spPositions]);
   const orphanPositionId = Number(form.positionId);
@@ -237,12 +354,14 @@ export default function CashierPatientsTab() {
       fetchRegions(),
       fetchWorkplacesAdmin().catch(() => fetchWorkplaces()),
       fetchSpIndustries().catch(() => []),
+      getEnums().catch(() => null),
     ])
-      .then(([r, w, ind]) => {
+      .then(([r, w, ind, en]) => {
         if (!cancelled) {
           setRegions(r);
           setWorkplaces(w);
           setSpIndustries(ind);
+          if (en) setEnums(en);
         }
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : "Ma’lumotlar yuklanmadi"))
@@ -323,6 +442,28 @@ export default function CashierPatientsTab() {
     };
   }, [form.spIndustryId]);
 
+  useEffect(() => {
+    if (!dialogOpen) return;
+    let cancelled = false;
+    setLoadingDialogWorkplaces(true);
+    fetchWorkplacesByUserLocationPage(0, 100)
+      .then((rows) => {
+        if (!cancelled) setDialogWorkplaces(rows);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "Ish joylari yuklanmadi");
+          setDialogWorkplaces([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingDialogWorkplaces(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dialogOpen]);
+
   const loadPatients = useCallback(async () => {
     setLoadingList(true);
     try {
@@ -358,7 +499,7 @@ export default function CashierPatientsTab() {
 
   const openCreate = () => {
     setEditingId(null);
-    setForm(emptyForm());
+    setForm(emptyForm(enums));
     setDialogOpen(true);
   };
 
@@ -376,14 +517,33 @@ export default function CashierPatientsTab() {
   const handleSave = async () => {
     const body = formToBody(form);
     if (!body) return;
+    let samplePreview: SaveSampleBody | null = null;
+    if (editingId == null && form.createSampleWithPatient) {
+      samplePreview = sampleFormToBody(form, 0, enums);
+      if (!samplePreview) return;
+    }
     setSaving(true);
     try {
       if (editingId != null) {
         await updatePatient(editingId, body);
         toast.success("Bemor yangilandi");
       } else {
-        await createPatient(body);
-        toast.success("Bemor yaratildi");
+        const created = await createPatient(body);
+        if (samplePreview) {
+          try {
+            await createSample({ ...samplePreview, patientId: created.id });
+          } catch (sampleErr) {
+            const msg = sampleErr instanceof Error ? sampleErr.message : "Namuna yaratilmadi";
+            toast.error(`Bemor yaratildi (#${created.id}), lekin namuna: ${msg}`);
+            setDialogOpen(false);
+            setEditingId(null);
+            await loadPatients();
+            return;
+          }
+          toast.success("Bemor va namuna yaratildi");
+        } else {
+          toast.success("Bemor yaratildi");
+        }
       }
       setDialogOpen(false);
       setEditingId(null);
@@ -425,6 +585,11 @@ export default function CashierPatientsTab() {
       { title: "Ism", ellipsis: true, render: (row) => row.firstName || "—" },
       { title: "Familiya", ellipsis: true, render: (row) => row.lastName || "—" },
       { title: "Otasining ismi", ellipsis: true, render: (row) => row.surname || "—" },
+      {
+        title: "Jins",
+        width: 96,
+        render: (row) => patientSexLabel(row.sex),
+      },
       { title: "Telefon", render: (row) => row.phoneNumber || "—" },
       {
         title: "Tug‘ilgan sana",
@@ -512,7 +677,8 @@ export default function CashierPatientsTab() {
             setDialogOpen(false);
             setEditingId(null);
           }}
-          width={720}
+          width={780}
+          styles={{ body: { maxHeight: "min(90vh, 820px)", overflowY: "auto" } }}
           destroyOnClose
           footer={
             <Space>
@@ -530,9 +696,15 @@ export default function CashierPatientsTab() {
             </Space>
           }
         >
-          <Typography.Paragraph type="secondary" className="!mb-4">
-            Barcha maydonlar server talabiga mos yuboriladi.
+          <Typography.Paragraph type="secondary" className="!mb-2">
+            {editingId != null
+              ? "Bemor ma’lumotlari server talabiga mos yuboriladi."
+              : "Bemor saqlanadi. Namuna kerak bo‘lsa, pastdagi belgini yoqing — viloyat va tuman ikkala yozuv uchun umumiy bo‘ladi."}
           </Typography.Paragraph>
+
+          <Typography.Title level={5} className="!mb-3 !mt-1">
+            Bemor
+          </Typography.Title>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
@@ -546,6 +718,23 @@ export default function CashierPatientsTab() {
             <div className="flex flex-col gap-1">
               <Typography.Text>Otasining ismi</Typography.Text>
               <Input value={form.surname} onChange={(e) => setForm({ ...form, surname: e.target.value })} />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Jins</Typography.Text>
+              <Select<number | null>
+                className="w-full"
+                placeholder="Tanlang"
+                value={form.sex ?? undefined}
+                onChange={(v) =>
+                  setForm({ ...form, sex: v === undefined || v === null ? null : (v === 1 ? 1 : 0) })
+                }
+                options={[
+                  { value: 1, label: "Erkak" },
+                  { value: 0, label: "Ayol" },
+                ]}
+                allowClear
+              />
             </div>
 
             <div className="flex flex-col gap-1">
@@ -618,7 +807,9 @@ export default function CashierPatientsTab() {
               <Select
                 allowClear
                 className="w-full"
-                placeholder="Tanlang"
+                placeholder={loadingDialogWorkplaces ? "Yuklanmoqda…" : "Tanlang"}
+                loading={loadingDialogWorkplaces}
+                disabled={loadingDialogWorkplaces}
                 value={form.workplaceId === "" ? undefined : form.workplaceId}
                 onChange={(v) => setForm({ ...form, workplaceId: v ?? "0" })}
                 options={[
@@ -626,7 +817,7 @@ export default function CashierPatientsTab() {
                   ...(showOrphanWorkplace && form.workplaceId && form.workplaceId !== "0"
                     ? [{ value: form.workplaceId, label: `Ish joyi #${form.workplaceId}` }]
                     : []),
-                  ...workplaces.map((w) => ({ value: String(w.id), label: w.name })),
+                  ...dialogWorkplaces.map((w) => ({ value: String(w.id), label: w.name })),
                 ]}
                 showSearch
                 optionFilterProp="label"
@@ -703,7 +894,7 @@ export default function CashierPatientsTab() {
               <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
             </div>
 
-            <div className="flex flex-col gap-1">
+            {/* <div className="flex flex-col gap-1">
               <Typography.Text>Imtiyoz (privilege)</Typography.Text>
               <InputNumber
                 className="w-full"
@@ -711,7 +902,7 @@ export default function CashierPatientsTab() {
                 value={Number(form.privilege) || 0}
                 onChange={(v) => setForm({ ...form, privilege: String(v ?? 0) })}
               />
-            </div>
+            </div> */}
             <div className="flex flex-col justify-center gap-1 sm:col-span-2">
               <Space align="center">
                 <Switch checked={form.isSendSms} onChange={(c) => setForm({ ...form, isSendSms: c })} />
@@ -728,6 +919,133 @@ export default function CashierPatientsTab() {
               />
             </div>
           </div>
+
+          {editingId == null ? (
+            <>
+              <Divider className="!my-6" />
+              <Checkbox
+                checked={form.createSampleWithPatient}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setForm((prev) => ({
+                    ...prev,
+                    createSampleWithPatient: checked,
+                    ...(checked && !prev.sampleType && enums?.sampleTypes[0]
+                      ? { sampleType: String(enums.sampleTypes[0].value) }
+                      : {}),
+                  }));
+                }}
+              >
+                Na'muna qo'shish
+              </Checkbox>
+
+              {form.createSampleWithPatient ? (
+                <>
+                  <Typography.Title level={5} className="!mb-1 !mt-4">
+                    Namuna
+                  </Typography.Title>
+                  <Typography.Paragraph type="secondary" className="!mb-4 !text-sm">
+                    Quyidagi maydonlar faqat namunaga tegishli. Viloyat va tuman tanlovi yuqoridagi bemor bo‘limidagi
+                    «Viloyat» / «Tuman» maydonlari bilan bir xil qiymatda yuboriladi (sampleObjectType: fuqaro / HUMAN).
+                  </Typography.Paragraph>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1">
+                  <Typography.Text>Obyekt nomi</Typography.Text>
+                  <Input
+                    value={form.sampleObjectName}
+                    onChange={(e) => setForm({ ...form, sampleObjectName: e.target.value })}
+                    placeholder="Namuna obyekti nomi"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Typography.Text>Namuna turi</Typography.Text>
+                  <Select
+                    className="w-full"
+                    placeholder={loadingRef ? "…" : "Tanlang"}
+                    loading={loadingRef}
+                    disabled={loadingRef}
+                    value={form.sampleType || undefined}
+                    onChange={(v) => setForm({ ...form, sampleType: v ?? "" })}
+                    options={(enums?.sampleTypes ?? []).map((e) => ({
+                      value: String(e.value),
+                      label: enumEntryDisplayLabel(e),
+                    }))}
+                    showSearch
+                    optionFilterProp="label"
+                  />
+                </div>
+                <div className="flex flex-col gap-1 sm:col-span-2">
+                  <Typography.Text>Namuna nomi</Typography.Text>
+                  <Input
+                    value={form.sampleName}
+                    onChange={(e) => setForm({ ...form, sampleName: e.target.value })}
+                    placeholder="Namuna nomi"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Typography.Text>Olingan sana va vaqt</Typography.Text>
+                  <DatePicker
+                    className="w-full"
+                    showTime={{ format: "HH:mm" }}
+                    placeholder="Sana va vaqtni tanlang"
+                    format="YYYY-MM-DD HH:mm:ss.SSS"
+                    value={form.sampleCollectedDate ? dayjs(form.sampleCollectedDate) : null}
+                    onChange={(date) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        sampleCollectedDate: date ? date.toISOString() : "",
+                      }))
+                    }
+                    allowClear
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Typography.Text>Laboratoriyaga taqdim etilgan sana va vaqt</Typography.Text>
+                  <DatePicker
+                    className="w-full"
+                    showTime={{ format: "HH:mm" }}
+                    placeholder="Sana va vaqtni tanlang"
+                    format="YYYY-MM-DD HH:mm:ss.SSS"
+                    value={form.sampleDateSubmissionLaboratory ? dayjs(form.sampleDateSubmissionLaboratory) : null}
+                    onChange={(date) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        sampleDateSubmissionLaboratory: date ? date.toISOString() : "",
+                      }))
+                    }
+                    allowClear
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Typography.Text>Namuna olingan joy</Typography.Text>
+                  <Input
+                    value={form.sampleSourceName}
+                    onChange={(e) => setForm({ ...form, sampleSourceName: e.target.value })}
+                    placeholder="Joy"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Typography.Text>Namuna olingan manzil</Typography.Text>
+                  <Input
+                    value={form.sampleSourceAddress}
+                    onChange={(e) => setForm({ ...form, sampleSourceAddress: e.target.value })}
+                    placeholder="Manzil"
+                  />
+                </div>
+                <div className="flex flex-col gap-1 sm:col-span-2">
+                  <Typography.Text>Namuna tavsifi</Typography.Text>
+                  <Input.TextArea
+                    rows={2}
+                    value={form.sampleDescription}
+                    onChange={(e) => setForm({ ...form, sampleDescription: e.target.value })}
+                    placeholder="Ixtiyoriy"
+                  />
+                </div>
+                  </div>
+                </>
+              ) : null}
+            </>
+          ) : null}
         </Modal>
 
         <Modal

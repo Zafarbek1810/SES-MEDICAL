@@ -64,11 +64,33 @@ export async function fetchWorkplaces(): Promise<WorkplaceDto[]> {
   return rows.map(normalizeWorkplaceDto).filter((x): x is WorkplaceDto => x !== null);
 }
 
-/** Foydalanuvchining lokatsiyasi bo‘yicha ish joylari */
-export async function fetchWorkplacesByUserLocation(): Promise<WorkplaceDto[]> {
-  const raw = await apiFetch<unknown>("/workplaces/by-user-location", { method: "GET" });
+function extractSpringPage(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const inner = o.data;
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) return inner as Record<string, unknown>;
+  return o;
+}
+
+/**
+ * Foydalanuvchi lokatsiyasi bo‘yicha ish joylari (pagination).
+ * GET `/workplaces/by-user-location?page=&size=`
+ */
+export async function fetchWorkplacesByUserLocationPage(page = 0, size = 100): Promise<WorkplaceDto[]> {
+  const q = new URLSearchParams({ page: String(page), size: String(size) });
+  const raw = await apiFetch<unknown>(`/workplaces/by-user-location?${q.toString()}`, { method: "GET" });
+  const pageObj = extractSpringPage(raw);
+  const contentRaw = pageObj?.content;
+  if (Array.isArray(contentRaw)) {
+    return contentRaw.map(normalizeWorkplaceDto).filter((x): x is WorkplaceDto => x !== null);
+  }
   const rows = unwrapList<unknown>(raw);
   return rows.map(normalizeWorkplaceDto).filter((x): x is WorkplaceDto => x !== null);
+}
+
+/** Foydalanuvchining lokatsiyasi bo‘yicha ish joylari (birinchi sahifa, 100 ta) */
+export async function fetchWorkplacesByUserLocation(): Promise<WorkplaceDto[]> {
+  return fetchWorkplacesByUserLocationPage(0, 100);
 }
 
 /** Admin panel uchun maxsus ro‘yxat endpointi */

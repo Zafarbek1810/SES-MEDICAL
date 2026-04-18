@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Outlet, useNavigate, useLocation } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
@@ -21,6 +21,8 @@ import {
   Calendar,
   Briefcase,
   ShoppingBag,
+  Loader2,
+  CheckCheck,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import {
@@ -32,6 +34,16 @@ import {
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
 import { Badge } from "../components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
+import { ScrollArea } from "../components/ui/scroll-area";
+import { formatTableDateTime } from "../../utils/tableDateFormat";
+import {
+  fetchUnreadNotificationCount,
+  fetchUnreadNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+  type NotificationDto,
+} from "../../services/notificationsApi";
 import { useTheme } from "../components/ThemeProvider";
 import {
   getPathForRole,
@@ -115,6 +127,24 @@ const adminEmployeeApisNav: DashboardNavItem = {
   color: "text-amber-600 dark:text-amber-400",
 };
 
+const labDirectorStatsNav: DashboardNavItem = {
+  id: "lab-director-stats",
+  name: "Statistika",
+  shortName: "Hisobot",
+  path: "/lab-director",
+  icon: BarChart3,
+  color: "text-sky-600 dark:text-sky-400",
+};
+
+const labDirectorAnalysesNav: DashboardNavItem = {
+  id: "lab-director-analyses",
+  name: "Tahlillar",
+  shortName: "Ko‘rib chiqish",
+  path: "/lab-director/analyses",
+  icon: FlaskConical,
+  color: "text-teal-600 dark:text-teal-400",
+};
+
 const roles: DashboardNavItem[] = [
   { id: "laborant", name: "Laborant", shortName: "Laborant", path: "/laborant", icon: Microscope, color: "text-green-600 dark:text-green-400" },
   { id: "lab-director", name: "Laboratoriya Direktori", shortName: "Direktor", path: "/lab-director", icon: ClipboardCheck, color: "text-purple-600 dark:text-purple-400" },
@@ -157,6 +187,9 @@ function resolveRolesForUser(role: string | undefined, apiRoles: ReferenceItem[]
     const adminNav = baseAdmin ? mergeNavLabelFromApi(baseAdmin, key, apiRoles) : undefined;
     return adminNav ? [adminNav, adminEmployeeApisNav] : [adminEmployeeApisNav];
   }
+  if (key === "LAB_DIRECTOR" || key === "LABORATORY_DIRECTOR") {
+    return [labDirectorStatsNav, labDirectorAnalysesNav];
+  }
   const fromCode = key ? ROLE_NAV_BY_CODE[key] : undefined;
   const fromPath = roles.find((r) => r.path === allowedPath);
   const base = fromCode ?? fromPath;
@@ -187,6 +220,16 @@ function navPathMatches(pathname: string, navPath: string): boolean {
   }
   if (navPath === "/cashier/analyses") {
     return pathname === "/cashier/analyses" || pathname.startsWith("/cashier/analyses/");
+  }
+  if (navPath === "/lab-director") {
+    return pathname === "/lab-director";
+  }
+  if (navPath === "/lab-director/analyses") {
+    return (
+      pathname === "/lab-director/analyses" ||
+      pathname.startsWith("/lab-director/analyses/") ||
+      pathname.startsWith("/lab-director/analysis/")
+    );
   }
   if (navPath === "/san-minimum/stats") {
     return pathname === "/san-minimum/stats" || pathname.startsWith("/san-minimum/stats/");
@@ -267,6 +310,80 @@ export default function DashboardLayout() {
     } catch {
       toast.error("Chiqishda xatolik");
       navigate("/login", { replace: true });
+    }
+  };
+
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifItems, setNotifItems] = useState<NotificationDto[]>([]);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [markingAll, setMarkingAll] = useState(false);
+
+  const refreshUnreadCount = useCallback(async () => {
+    if (!isAuthenticated()) return;
+    try {
+      const n = await fetchUnreadNotificationCount();
+      setUnreadCount(n);
+    } catch {
+      /* 401 yoki tarmoq — jim */
+    }
+  }, []);
+
+  const loadNotificationPanel = useCallback(async () => {
+    setNotifLoading(true);
+    try {
+      const [count, page] = await Promise.all([
+        fetchUnreadNotificationCount(),
+        fetchUnreadNotifications(0, 30),
+      ]);
+      setUnreadCount(count);
+      setNotifItems(page.items);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Bildirishnomalar yuklanmadi");
+    } finally {
+      setNotifLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated()) return;
+    void refreshUnreadCount();
+    const id = window.setInterval(() => void refreshUnreadCount(), 60000);
+    return () => window.clearInterval(id);
+  }, [refreshUnreadCount]);
+
+  useEffect(() => {
+    if (notifOpen) void loadNotificationPanel();
+  }, [notifOpen, loadNotificationPanel]);
+
+  const handleMarkAllNotificationsRead = async () => {
+    if (unreadCount <= 0) return;
+    setMarkingAll(true);
+    try {
+      await markAllNotificationsRead();
+      setUnreadCount(0);
+      setNotifItems([]);
+      toast.success("Barcha bildirishnomalar o‘qilgan deb belgilandi");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Amal bajarilmadi");
+    } finally {
+      setMarkingAll(false);
+    }
+  };
+
+  const handleNotificationClick = async (n: NotificationDto) => {
+    try {
+      if (!n.isRead) {
+        await markNotificationRead(n.id);
+        setUnreadCount((c) => Math.max(0, c - 1));
+        setNotifItems((prev) => prev.filter((x) => x.id !== n.id));
+      }
+      setNotifOpen(false);
+      if (n.sanMinimumId != null && n.sanMinimumId > 0) {
+        navigate("/san-minimum");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "O‘qilgan deb belgilanmadi");
     }
   };
 
@@ -436,21 +553,128 @@ export default function DashboardLayout() {
             </motion.div>
 
             {/* Notifications */}
-            <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-              <Button variant="ghost" size="icon" className="rounded-xl hover:bg-muted relative">
-                <Bell className="h-5 w-5" />
-                <motion.div
-                  className="absolute -top-1 -right-1"
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: "spring", stiffness: 500 }}
-                >
-                  <Badge className="h-5 w-5 flex items-center justify-center p-0 bg-red-500 text-white text-xs rounded-full">
-                    3
-                  </Badge>
+            <Popover open={notifOpen} onOpenChange={setNotifOpen}>
+              <PopoverTrigger asChild>
+                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="rounded-xl hover:bg-muted relative"
+                    aria-label="Bildirishnomalar"
+                  >
+                    <Bell className="h-5 w-5" />
+                    {unreadCount > 0 ? (
+                      <motion.div
+                        className="absolute -top-0.5 -right-0.5"
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                        transition={{ type: "spring", stiffness: 500 }}
+                      >
+                        <Badge className="h-5 min-w-5 px-1 flex items-center justify-center bg-red-500 hover:bg-red-500 text-white text-[10px] font-semibold rounded-full border-0 shadow-sm">
+                          {unreadCount > 99 ? "99+" : unreadCount}
+                        </Badge>
+                      </motion.div>
+                    ) : null}
+                  </Button>
                 </motion.div>
-              </Button>
-            </motion.div>
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                sideOffset={8}
+                className="w-[min(100vw-2rem,400px)] p-0 overflow-hidden rounded-2xl border border-border/80 bg-popover shadow-xl"
+              >
+                <div className="relative overflow-hidden border-b border-border/60 bg-gradient-to-br from-sky-500/15 via-background to-teal-500/10 dark:from-sky-500/25 dark:to-teal-500/15 px-4 py-3">
+                  <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(56,189,248,0.12),transparent_50%)] pointer-events-none" />
+                  <div className="relative flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <Bell className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-sm leading-tight truncate">Bildirishnomalar</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {unreadCount > 0 ? `${unreadCount} ta o‘qilmagan` : "Yangi xabarlar yo‘q"}
+                        </p>
+                      </div>
+                    </div>
+                    {unreadCount > 0 ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={markingAll || notifLoading}
+                        className="h-8 shrink-0 rounded-lg text-xs gap-1 border-border/80 bg-background/80"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          void handleMarkAllNotificationsRead();
+                        }}
+                      >
+                        {markingAll ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <CheckCheck className="h-3.5 w-3.5" />
+                        )}
+                        Hammasini o‘qilgan
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <ScrollArea className="h-[min(360px,50vh)]">
+                  <div className="p-2">
+                    {notifLoading ? (
+                      <div className="flex flex-col items-center justify-center gap-2 py-14 text-muted-foreground">
+                        <Loader2 className="h-8 w-8 animate-spin opacity-60" />
+                        <span className="text-sm">Yuklanmoqda…</span>
+                      </div>
+                    ) : notifItems.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center gap-2 py-14 px-4 text-center">
+                        <div className="rounded-full bg-muted p-3">
+                          <Bell className="h-6 w-6 text-muted-foreground opacity-60" />
+                        </div>
+                        <p className="text-sm font-medium text-foreground">Hozircha xabar yo‘q</p>
+                        <p className="text-xs text-muted-foreground max-w-[240px]">
+                          O‘qilmagan bildirishnomalar shu yerda chiqadi.
+                        </p>
+                      </div>
+                    ) : (
+                      <ul className="space-y-1">
+                        {notifItems.map((n) => (
+                          <li key={n.id}>
+                            <button
+                              type="button"
+                              onClick={() => void handleNotificationClick(n)}
+                              className="w-full text-left rounded-xl border border-transparent px-3 py-2.5 transition-colors hover:bg-muted/80 hover:border-border/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              <div className="flex items-start gap-2">
+                                {!n.isRead ? (
+                                  <span
+                                    className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.6)]"
+                                    aria-hidden
+                                  />
+                                ) : (
+                                  <span className="mt-1.5 h-2 w-2 shrink-0" aria-hidden />
+                                )}
+                                <div className="min-w-0 flex-1 space-y-0.5">
+                                  <p className="text-sm font-semibold leading-snug text-foreground line-clamp-2">
+                                    {n.title || "Bildirishnoma"}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground line-clamp-3">{n.message}</p>
+                                  <p className="text-[10px] text-muted-foreground/90 tabular-nums pt-0.5">
+                                    {n.createdAt ? formatTableDateTime(n.createdAt) : "—"}
+                                  </p>
+                                </div>
+                              </div>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </ScrollArea>
+              </PopoverContent>
+            </Popover>
 
             {/* User Menu */}
             <DropdownMenu>

@@ -38,6 +38,7 @@ import {
   type SampleDto,
   type SaveSampleBody,
 } from "../../../services/samplesApi";
+import { fetchPatients, type PatientDto } from "../../../services/patientsApi";
 
 function referenceLabel(item: ReferenceItem): string {
   return item.nameUz?.trim() || item.name?.trim() || item.nameRu?.trim() || `#${item.id}`;
@@ -51,7 +52,17 @@ function referenceNameLatLabel(item: ReferenceItem): string {
   return nameLat?.trim() || referenceLabel(item);
 }
 
+const PATIENTS_FOR_SAMPLE_PICKER = 200;
+
+function patientPickerLabel(p: PatientDto): string {
+  const name = [p.firstName, p.lastName, p.surname].filter(Boolean).join(" ").trim();
+  return name ? `${name} (#${p.id})` : `Bemor #${p.id}`;
+}
+
 type SampleFormState = {
+  objectName: string;
+  sampleObjectType: string;
+  patientId: string;
   sampleType: string;
   name: string;
   description: string;
@@ -65,6 +76,9 @@ type SampleFormState = {
 
 function emptyForm(enums: EnumsData | null): SampleFormState {
   return {
+    objectName: "",
+    sampleObjectType: enums?.sampleObjectType[0] ? String(enums.sampleObjectType[0].value) : "",
+    patientId: "",
     sampleType: enums?.sampleTypes[0] ? String(enums.sampleTypes[0].value) : "",
     name: "",
     description: "",
@@ -79,6 +93,9 @@ function emptyForm(enums: EnumsData | null): SampleFormState {
 
 function sampleToForm(s: SampleDto): SampleFormState {
   return {
+    objectName: s.objectName ?? "",
+    sampleObjectType: String(s.sampleObjectType ?? ""),
+    patientId: s.patientId > 0 ? String(s.patientId) : "",
     sampleType: String(s.sampleType),
     name: s.name,
     description: s.description,
@@ -91,11 +108,28 @@ function sampleToForm(s: SampleDto): SampleFormState {
   };
 }
 
-function formToBody(f: SampleFormState): SaveSampleBody | null {
+function formToBody(f: SampleFormState, enums: EnumsData | null): SaveSampleBody | null {
+  const sampleObjectType = Number(f.sampleObjectType);
   const sampleType = Number(f.sampleType);
   const regionId = Number(f.regionId);
   const districtId = Number(f.districtId);
+  const patientIdNum = Number(f.patientId);
 
+  if (!f.objectName.trim()) {
+    toast.error("Obyekt nomini kiriting");
+    return null;
+  }
+  if (!Number.isFinite(sampleObjectType)) {
+    toast.error("Namuna obyekti turini tanlang");
+    return null;
+  }
+  const objEntry = enums?.sampleObjectType.find((e) => e.value === sampleObjectType);
+  const isHuman = objEntry?.name?.trim().toUpperCase() === "HUMAN";
+  const patientId = Number.isFinite(patientIdNum) && patientIdNum > 0 ? patientIdNum : 0;
+  if (isHuman && patientId <= 0) {
+    toast.error("Fuqaro asosida — bemorni tanlang");
+    return null;
+  }
   if (!Number.isFinite(sampleType)) {
     toast.error("Namuna turini tanlang");
     return null;
@@ -122,6 +156,9 @@ function formToBody(f: SampleFormState): SaveSampleBody | null {
   }
 
   return {
+    objectName: f.objectName.trim(),
+    sampleObjectType,
+    patientId,
     sampleType,
     name: f.name.trim(),
     description: f.description.trim(),
@@ -145,6 +182,7 @@ export default function CashierSamplesTab() {
   const [enums, setEnums] = useState<EnumsData | null>(null);
   const [regions, setRegions] = useState<ReferenceItem[]>([]);
   const [districts, setDistricts] = useState<ReferenceItem[]>([]);
+  const [patients, setPatients] = useState<PatientDto[]>([]);
   const [loadingRef, setLoadingRef] = useState(true);
   const [loadingDistricts, setLoadingDistricts] = useState(false);
 
@@ -165,14 +203,38 @@ export default function CashierSamplesTab() {
     return m;
   }, [regions]);
 
+  const patientLabelById = useMemo(() => {
+    const m = new Map<number, string>();
+    patients.forEach((p) => {
+      m.set(p.id, patientPickerLabel(p));
+    });
+    return m;
+  }, [patients]);
+
+  const patientSelectIds = useMemo(() => new Set(patients.map((p) => p.id)), [patients]);
+  const orphanPatientId = Number(form.patientId);
+  const showOrphanPatient =
+    form.patientId !== "" &&
+    Number.isFinite(orphanPatientId) &&
+    orphanPatientId > 0 &&
+    !patientSelectIds.has(orphanPatientId);
+
+  const isHumanSample = useMemo(() => {
+    const v = Number(form.sampleObjectType);
+    if (!Number.isFinite(v) || !enums) return false;
+    const hit = enums.sampleObjectType.find((e) => e.value === v);
+    return hit?.name?.trim().toUpperCase() === "HUMAN";
+  }, [enums, form.sampleObjectType]);
+
   useEffect(() => {
     let cancelled = false;
     setLoadingRef(true);
-    Promise.all([getEnums(), fetchRegions()])
-      .then(([e, r]) => {
+    Promise.all([getEnums(), fetchRegions(), fetchPatients(0, PATIENTS_FOR_SAMPLE_PICKER)])
+      .then(([e, r, pat]) => {
         if (!cancelled) {
           setEnums(e);
           setRegions(r);
+          setPatients(pat.items);
         }
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : "Spravochniklar yuklanmadi"))
@@ -270,7 +332,7 @@ export default function CashierSamplesTab() {
   };
 
   const handleSave = async () => {
-    const body = formToBody(form);
+    const body = formToBody(form, enums);
     if (!body) return;
     setSaving(true);
     try {
@@ -327,6 +389,9 @@ export default function CashierSamplesTab() {
               <TableRow>
                 <TableHead className="w-[72px]">№</TableHead>
                 <TableHead>Turi</TableHead>
+                <TableHead>Asos</TableHead>
+                <TableHead>Obyekt nomi</TableHead>
+                <TableHead>Bemor</TableHead>
                 <TableHead>Nomi</TableHead>
                 <TableHead>Manba</TableHead>
                 <TableHead>Viloyat/Tuman</TableHead>
@@ -338,13 +403,13 @@ export default function CashierSamplesTab() {
             <TableBody>
               {loadingList ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
+                  <TableCell colSpan={11} className="text-center text-muted-foreground py-10">
                     Yuklanmoqda…
                   </TableCell>
                 </TableRow>
               ) : samples.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
+                  <TableCell colSpan={11} className="text-center text-muted-foreground py-10">
                     Namunalar yo‘q
                   </TableCell>
                 </TableRow>
@@ -354,6 +419,17 @@ export default function CashierSamplesTab() {
                     <TableCell className="font-mono text-sm tabular-nums">{page * pageSize + idx + 1}</TableCell>
                     <TableCell className="text-sm">
                       {enums ? enumLabel(enums.sampleTypes, s.sampleType) : s.sampleType}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {enums ? enumLabel(enums.sampleObjectType, s.sampleObjectType) : s.sampleObjectType}
+                    </TableCell>
+                    <TableCell className="text-sm max-w-[140px] truncate" title={s.objectName || undefined}>
+                      {s.objectName || "—"}
+                    </TableCell>
+                    <TableCell className="text-sm tabular-nums">
+                      {s.patientId > 0
+                        ? patientLabelById.get(s.patientId) ?? `ID ${s.patientId}`
+                        : "—"}
                     </TableCell>
                     <TableCell className="text-sm">{s.name || "—"}</TableCell>
                     <TableCell className="text-sm">{s.sourceName || "—"}</TableCell>
@@ -462,6 +538,74 @@ export default function CashierSamplesTab() {
           }
         >
           <div className="space-y-4">
+            <div className="flex flex-col gap-1">
+              <Typography.Text>Obyekt nomi</Typography.Text>
+              <Input
+                value={form.objectName}
+                onChange={(e) => setForm({ ...form, objectName: e.target.value })}
+                placeholder="Obyekt nomi"
+              />
+            </div>
+
+            <div className={`grid grid-cols-1 gap-3 ${isHumanSample ? "sm:grid-cols-2" : ""}`}>
+              <div className="flex flex-col gap-1">
+                <Typography.Text>Asos</Typography.Text>
+                <AntSelect
+                  className="w-full"
+                  placeholder={loadingRef ? "…" : "Tanlang"}
+                  loading={loadingRef}
+                  disabled={loadingRef}
+                  value={form.sampleObjectType || undefined}
+                  onChange={(v) => {
+                    const next = v ?? "";
+                    const nextEntry = enums?.sampleObjectType.find((e) => String(e.value) === next);
+                    const nextIsHuman = nextEntry?.name?.trim().toUpperCase() === "HUMAN";
+                    setForm((prev) => ({
+                      ...prev,
+                      sampleObjectType: next,
+                      patientId: nextIsHuman ? prev.patientId : "",
+                    }));
+                  }}
+                  options={(enums?.sampleObjectType ?? []).map((e) => ({
+                    value: String(e.value),
+                    label: enumEntryDisplayLabel(e),
+                  }))}
+                  showSearch
+                  optionFilterProp="label"
+                />
+              </div>
+              {isHumanSample ? (
+                <div className="flex flex-col gap-1">
+                  <Typography.Text>Bemor</Typography.Text>
+                  <AntSelect
+                    className="w-full"
+                    placeholder={loadingRef ? "Yuklanmoqda…" : "Tanlang"}
+                    loading={loadingRef}
+                    disabled={loadingRef}
+                    value={form.patientId || undefined}
+                    onChange={(v) => setForm({ ...form, patientId: v ?? "" })}
+                    options={[
+                      ...(showOrphanPatient
+                        ? [
+                            {
+                              value: form.patientId,
+                              label: `Bemor #${form.patientId} (ro‘yxatda yo‘q)`,
+                            },
+                          ]
+                        : []),
+                      ...patients.map((p) => ({
+                        value: String(p.id),
+                        label: patientPickerLabel(p),
+                      })),
+                    ]}
+                    showSearch
+                    optionFilterProp="label"
+                    listHeight={320}
+                  />
+                </div>
+              ) : null}
+            </div>
+
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1">
                 <Typography.Text>Namuna turi</Typography.Text>
