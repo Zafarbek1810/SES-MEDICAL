@@ -1,4 +1,4 @@
-import { apiFetch, unwrapList } from "./apiHttp";
+import { apiFetch, apiFetchBlob, unwrapList } from "./apiHttp";
 
 export type FecesParasiteResultRow = {
   orderDetailId: number;
@@ -55,6 +55,16 @@ function normalizeFecesResultByOrderDetailItem(raw: unknown): FecesParasiteResul
 /**
  * GET /analysis-result-feces-parasites/by-order-detail/{orderDetailId}
  */
+/**
+ * GET /analysis-result-feces-parasites/by-order-detail/{orderDetailId}/pdf/download
+ */
+export async function fetchFecesParasitesPdfBlobByOrderDetail(orderDetailId: number): Promise<Blob> {
+  return apiFetchBlob(
+    `/analysis-result-feces-parasites/by-order-detail/${encodeURIComponent(String(orderDetailId))}/pdf/download`,
+    { method: "GET" }
+  );
+}
+
 export async function fetchAnalysisResultFecesParasitesByOrderDetail(
   orderDetailId: number
 ): Promise<FecesParasiteResultByOrderDetailItem[]> {

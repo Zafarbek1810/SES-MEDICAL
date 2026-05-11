@@ -95,7 +95,7 @@ function sampleToForm(s: SampleDto): SampleFormState {
   return {
     objectName: s.objectName ?? "",
     sampleObjectType: String(s.sampleObjectType ?? ""),
-    patientId: s.patientId > 0 ? String(s.patientId) : "",
+    patientId: (s.patientId ?? 0) > 0 ? String(s.patientId) : "",
     sampleType: String(s.sampleType),
     name: s.name,
     description: s.description,
@@ -125,8 +125,8 @@ function formToBody(f: SampleFormState, enums: EnumsData | null): SaveSampleBody
   }
   const objEntry = enums?.sampleObjectType.find((e) => e.value === sampleObjectType);
   const isHuman = objEntry?.name?.trim().toUpperCase() === "HUMAN";
-  const patientId = Number.isFinite(patientIdNum) && patientIdNum > 0 ? patientIdNum : 0;
-  if (isHuman && patientId <= 0) {
+  const patientId = isHuman ? (Number.isFinite(patientIdNum) && patientIdNum > 0 ? patientIdNum : null) : null;
+  if (isHuman && (patientId == null || patientId <= 0)) {
     toast.error("Fuqaro asosida — bemorni tanlang");
     return null;
   }
@@ -427,8 +427,8 @@ export default function CashierSamplesTab() {
                       {s.objectName || "—"}
                     </TableCell>
                     <TableCell className="text-sm tabular-nums">
-                      {s.patientId > 0
-                        ? patientLabelById.get(s.patientId) ?? `ID ${s.patientId}`
+                      {(s.patientId ?? 0) > 0
+                        ? patientLabelById.get(s.patientId ?? 0) ?? `ID ${s.patientId}`
                         : "—"}
                     </TableCell>
                     <TableCell className="text-sm">{s.name || "—"}</TableCell>

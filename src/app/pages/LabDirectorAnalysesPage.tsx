@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { Eye, Filter, Search } from "lucide-react";
+import { Eye, FileText, Filter, Search } from "lucide-react";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
@@ -18,6 +18,7 @@ import {
 } from "../../services/orderDetailsListApi";
 import { enumLabel, getEnums, type EnumsData } from "../../services/enumsApi";
 import { analysisStateToBadgeStatus } from "../../utils/analysisStateForBadge";
+import { getStoredUser, normalizeRoleKey } from "../../services/auth";
 
 function patientFio(row: OrderDetailListItem): string {
   const fio = [row.patientFirstName, row.patientLastName].filter(Boolean).join(" ").trim();
@@ -28,6 +29,14 @@ function patientFio(row: OrderDetailListItem): string {
 function isApprovedAnalysis(enums: EnumsData | null, row: OrderDetailListItem): boolean {
   if (row.analysisStatus === 34) return true;
   return analysisStateToBadgeStatus(enums, row.analysisStatus) === "Completed";
+}
+
+function pdfRouteForAnalysis(row: OrderDetailListItem): string {
+  const shortName = row.analysisShortName?.trim().toUpperCase() ?? "";
+  const params = new URLSearchParams();
+  if (shortName) params.set("analysisShortName", shortName);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return `/lab-director/analyses/feces-parasites-pdf/${row.id}${suffix}`;
 }
 
 export default function LabDirectorAnalysesPage() {
@@ -113,6 +122,12 @@ export default function LabDirectorAnalysesPage() {
       setUpdatingIds((prev) => prev.filter((x) => x !== id));
     }
   };
+
+  /** Laboratoriya direktori (sidebar: «Direktor») — feces-parasites PDF yo‘li */
+  const isLaboratoryDirectorRole = (() => {
+    const key = normalizeRoleKey(getStoredUser()?.role);
+    return key === "LAB_DIRECTOR" || key === "LABORATORY_DIRECTOR";
+  })();
 
   const actionSelectValue = (analysisStatus: number): "none" | "approve" | "reject" => {
     if (analysisStatus === 34) return "approve";
@@ -216,16 +231,29 @@ export default function LabDirectorAnalysesPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="shrink-0 gap-1"
-                            onClick={() => navigate(`/lab-director/analysis/${analysis.id}`)}
-                          >
-                            <Eye className="h-4 w-4" />
-                            Batafsil
-                          </Button>
+                          {isLaboratoryDirectorRole ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="shrink-0 gap-1"
+                              onClick={() => navigate(pdfRouteForAnalysis(analysis))}
+                            >
+                              <FileText className="h-4 w-4" />
+                              PDF natija
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="shrink-0 gap-1"
+                              onClick={() => navigate(`/lab-director/analysis/${analysis.id}`)}
+                            >
+                              <Eye className="h-4 w-4" />
+                              Batafsil
+                            </Button>
+                          )}
                           <Select
                             value={actionSelectValue(analysis.analysisStatus)}
                             onValueChange={(value) => {

@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { motion } from "motion/react";
 import { ArrowLeft, Save, CheckCircle, Info, Pencil } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Checkbox } from "../components/ui/checkbox";
+import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { StatusBadge, type StatusBadgeStatus } from "../components/StatusBadge";
@@ -18,6 +19,38 @@ import {
   fetchAnalysisResultFecesParasitesByOrderDetail,
   putAnalysisResultFecesParasites,
 } from "../../services/analysisResultFecesParasitesApi";
+import { fetchSpWaterChecks, type SpWaterCheckItem } from "../../services/spWaterCheckApi";
+import {
+  fetchAnalysisResultParasiteWaterChecksByOrderDetail,
+  postAnalysisResultParasiteWaterChecks,
+  putAnalysisResultParasiteWaterChecks,
+  type ParasiteWaterCheckResultRow,
+} from "../../services/analysisResultParasiteWaterChecksApi";
+
+/** Suv na'munasida gijja urug'i (sp-water-check) — checkbox emas, qiymat inputlari */
+const WATER_CHECK_ANALYSIS_SHORT_NAME = "SNGUA";
+
+function parasiteWaterPostDoneStorageKey(orderDetailId: number): string {
+  return `parasiteWaterCheckUsedPost:${orderDetailId}`;
+}
+
+function buildParasiteWaterPayload(
+  orderDetailId: number,
+  waterValues: Record<number, string>
+): ParasiteWaterCheckResultRow[] {
+  return Object.entries(waterValues)
+    .map(([idStr, result]) => ({
+      orderDetailId,
+      waterCheckId: Number(idStr),
+      result: String(result ?? "").trim(),
+    }))
+    .filter(
+      (row) =>
+        Number.isFinite(row.waterCheckId) &&
+        row.waterCheckId > 0 &&
+        row.result.length > 0
+    );
+}
 
 function patientFio(row: OrderDetailListItem): string {
   const a = [row.patientFirstName, row.patientLastName].filter(Boolean).join(" ").trim();
@@ -46,7 +79,7 @@ export default function AnalysisDetail() {
   const location = useLocation();
   /** Laboratoriya direktori alohida yo‘l — doim faqat ko‘rish */
   const isLabDirectorContext = location.pathname.startsWith("/lab-director/analysis/");
-  const laborantListPath = "/laborant";
+  const laborantListPath = "/laborant/analyses";
   const labDirectorListPath = "/lab-director/analyses";
   const listPath = isLabDirectorContext ? labDirectorListPath : laborantListPath;
   const orderDetailId = idParam ? Number.parseInt(idParam, 10) : NaN;
@@ -57,14 +90,41 @@ export default function AnalysisDetail() {
   const [loadingDetail, setLoadingDetail] = useState(true);
   const [status, setStatus] = useState<StatusBadgeStatus>("Pending");
   const [parasites, setParasites] = useState<SpParasiteDto[]>([]);
-  const [loadingParasites, setLoadingParasites] = useState(true);
+  const [loadingParasites, setLoadingParasites] = useState(false);
   const [selectedParasiteIds, setSelectedParasiteIds] = useState<number[]>([]);
   const [notes, setNotes] = useState("");
   const [resultsSaved, setResultsSaved] = useState(false);
   const [savingResults, setSavingResults] = useState(false);
 
+  const [waterChecks, setWaterChecks] = useState<SpWaterCheckItem[]>([]);
+  const [waterValues, setWaterValues] = useState<Record<number, string>>({});
+  const [loadingWaterChecks, setLoadingWaterChecks] = useState(false);
+  /** Birinchi muvaffaqiyatli saqlash POST bo‘lsa, keyingilar PUT (sessionStorage bilan sahifa yangilanganda ham). */
+  const waterFirstSaveDoneRef = useRef(false);
+
+  const isWaterCheckAnalysis =
+    detail?.analysisShortName?.trim().toUpperCase() === WATER_CHECK_ANALYSIS_SHORT_NAME;
+
+  /** Tasdiqlangan / bajarilgan — tahrirlash mumkin emas */
+  const isConfirmedAnalysis = useMemo(() => {
+    if (!detail) return false;
+    if (detail.analysisStatus === 34) return true;
+    return analysisStateToBadgeStatus(enums, detail.analysisStatus) === "Completed";
+  }, [detail, enums]);
+
   useEffect(() => {
     let cancelled = false;
+    if (!detail) {
+      setParasites([]);
+      setLoadingParasites(false);
+      return;
+    }
+    if (detail.analysisShortName?.trim().toUpperCase() === WATER_CHECK_ANALYSIS_SHORT_NAME) {
+      setParasites([]);
+      setLoadingParasites(false);
+      setSelectedParasiteIds([]);
+      return;
+    }
     (async () => {
       try {
         setLoadingParasites(true);
@@ -82,7 +142,59 @@ export default function AnalysisDetail() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [detail]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (
+      !detail ||
+      detail.analysisShortName?.trim().toUpperCase() !== WATER_CHECK_ANALYSIS_SHORT_NAME ||
+      !Number.isFinite(orderDetailId) ||
+      orderDetailId <= 0
+    ) {
+      setWaterChecks([]);
+      setWaterValues({});
+      setLoadingWaterChecks(false);
+      return;
+    }
+    (async () => {
+      try {
+        setLoadingWaterChecks(true);
+        const [list, savedRows] = await Promise.all([
+          fetchSpWaterChecks(),
+          /** Tahrirlash / ko‘rish: saqlangan qiymatlar */
+          fetchAnalysisResultParasiteWaterChecksByOrderDetail(orderDetailId).catch(() => []),
+        ]);
+        if (cancelled) return;
+        setWaterChecks(list);
+        const next: Record<number, string> = {};
+        for (const x of list) next[x.id] = "";
+        for (const r of savedRows) {
+          next[r.waterCheckId] = r.result ?? "";
+        }
+        setWaterValues(next);
+        if (savedRows.length > 0) {
+          waterFirstSaveDoneRef.current = true;
+          try {
+            sessionStorage.setItem(parasiteWaterPostDoneStorageKey(orderDetailId), "1");
+          } catch {
+            /* jim */
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "Suv tekshiruvlari ro‘yxati yuklanmadi");
+          setWaterChecks([]);
+          setWaterValues({});
+        }
+      } finally {
+        if (!cancelled) setLoadingWaterChecks(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [detail, orderDetailId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,9 +234,27 @@ export default function AnalysisDetail() {
     setResultsSaved(false);
   }, [orderDetailId]);
 
+  useEffect(() => {
+    if (!Number.isFinite(orderDetailId) || orderDetailId <= 0) {
+      waterFirstSaveDoneRef.current = false;
+      return;
+    }
+    try {
+      waterFirstSaveDoneRef.current =
+        typeof sessionStorage !== "undefined" &&
+        sessionStorage.getItem(parasiteWaterPostDoneStorageKey(orderDetailId)) === "1";
+    } catch {
+      waterFirstSaveDoneRef.current = false;
+    }
+  }, [orderDetailId]);
+
   /** Mavjud saqlangan natijalar — faqat `/sp-parasites` ro‘yxatida bor `spParasitesId` lar tanlanadi */
   useEffect(() => {
     let cancelled = false;
+    if (!detail || detail.analysisShortName?.trim().toUpperCase() === WATER_CHECK_ANALYSIS_SHORT_NAME) {
+      setSelectedParasiteIds([]);
+      return;
+    }
     if (!Number.isFinite(orderDetailId) || orderDetailId <= 0) {
       setSelectedParasiteIds([]);
       return;
@@ -147,7 +277,7 @@ export default function AnalysisDetail() {
     return () => {
       cancelled = true;
     };
-  }, [orderDetailId, parasites, loadingParasites]);
+  }, [detail, orderDetailId, parasites, loadingParasites]);
 
   const toggleParasite = (id: number) => {
     if (isReadOnly) return;
@@ -162,6 +292,48 @@ export default function AnalysisDetail() {
       return [...withoutNone, id];
     });
   };
+
+  const handleSaveWaterResults = useCallback(async () => {
+    if (isReadOnly) return;
+    if (!Number.isFinite(orderDetailId) || orderDetailId <= 0 || !detail) return;
+    const payload = buildParasiteWaterPayload(orderDetailId, waterValues);
+    if (payload.length === 0) {
+      toast.error("Kamida bitta parametr uchun qiymat kiriting");
+      return;
+    }
+    try {
+      setSavingResults(true);
+      const res = waterFirstSaveDoneRef.current
+        ? await putAnalysisResultParasiteWaterChecks(orderDetailId, payload)
+        : await postAnalysisResultParasiteWaterChecks(payload);
+      if (res.success === false) {
+        const errMsg =
+          typeof res.message === "string" && res.message.trim()
+            ? res.message.trim()
+            : "Saqlash muvaffaqiyatsiz";
+        toast.error(errMsg);
+        return;
+      }
+      if (!waterFirstSaveDoneRef.current) {
+        waterFirstSaveDoneRef.current = true;
+        try {
+          sessionStorage.setItem(parasiteWaterPostDoneStorageKey(orderDetailId), "1");
+        } catch {
+          /* jim */
+        }
+      }
+      const okMsg =
+        typeof res.message === "string" && res.message.trim()
+          ? res.message.trim()
+          : "Natijalar muvaffaqiyatli saqlandi.";
+      toast.success(okMsg);
+      navigate(listPath);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Natijalarni saqlab bo‘lmadi");
+    } finally {
+      setSavingResults(false);
+    }
+  }, [isReadOnly, orderDetailId, detail, waterValues, navigate, listPath]);
 
   const handleSaveResults = useCallback(async () => {
     if (isReadOnly) return;
@@ -233,6 +405,8 @@ export default function AnalysisDetail() {
               variant="outline"
               size="sm"
               className="rounded-xl gap-1.5"
+              disabled={isConfirmedAnalysis}
+              title={isConfirmedAnalysis ? "Tasdiqlangan tahlilni tahrirlab bo‘lmaydi" : undefined}
               onClick={() => navigate(`/laborant/analysis/${orderDetailId}`)}
             >
               <Pencil className="h-4 w-4" />
@@ -274,6 +448,7 @@ export default function AnalysisDetail() {
                 {[
                   { label: "Bemor (F.I.O)", value: patientFio(detail) },
                   { label: "Tahlil turi", value: detail.analysisNameUz || "—" },
+                  // { label: "Tahlil qisqa nomi", value: detail.analysisShortName?.trim() || "—" },
                   { label: "Laboratoriya", value: detail.laboratoryNameUz || "—" },
                   { label: "Namuna", value: sampleLine(detail) },
                   { label: "Buyurtma sanasi", value: formatTableDateTime(detail.orderCreatedAt) },
@@ -310,18 +485,59 @@ export default function AnalysisDetail() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Save className="h-5 w-5 text-green-600 dark:text-green-400" />
-              Parazitlar va topilmalar
+              {isWaterCheckAnalysis ? "Suv tekshiruvi parametrlari" : "Parazitlar va topilmalar"}
             </CardTitle>
             <CardDescription>
-              {isReadOnly
-                ? "Saqlangan belgilashlar (faqat ko‘rish)"
-                : "Aniqlangan parazitlarni belgilang"}
+              {isWaterCheckAnalysis
+                ? isReadOnly
+                  ? "Parametr qiymatlari (faqat ko‘rish)"
+                  : "Faqat to‘ldirilgan parametrlar saqlashda yuboriladi"
+                : isReadOnly
+                  ? "Saqlangan belgilashlar (faqat ko‘rish)"
+                  : "Aniqlangan parazitlarni belgilang"}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-6">
               {!detail && !loadingDetail ? (
                 <p className="text-sm text-muted-foreground">Avval buyurtma qatorini yuklang.</p>
+              ) : isWaterCheckAnalysis ? (
+                loadingWaterChecks ? (
+                  <p className="text-sm text-muted-foreground">Parametrlar ro‘yxati yuklanmoqda…</p>
+                ) : waterChecks.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Ro‘yxat bo‘sh yoki yuklanmadi.</p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {waterChecks.map((w, index) => (
+                      <motion.div
+                        key={w.id}
+                        initial={{ opacity: 0, x: -12 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.45 + Math.min(index, 12) * 0.02 }}
+                        className="flex flex-col gap-2 rounded-xl border border-border bg-muted/30 px-3 py-3"
+                      >
+                        <Label htmlFor={`water-${w.id}`} className="text-sm font-medium leading-snug">
+                          {w.name}
+                        </Label>
+                        <Input
+                          id={`water-${w.id}`}
+                          type="text"
+                          placeholder="Qiymat"
+                          value={waterValues[w.id] ?? ""}
+                          readOnly={isReadOnly}
+                          disabled={isReadOnly}
+                          onChange={(e) =>
+                            setWaterValues((prev) => ({
+                              ...prev,
+                              [w.id]: e.target.value,
+                            }))
+                          }
+                          className="rounded-lg border-border bg-background"
+                        />
+                      </motion.div>
+                    ))}
+                  </div>
+                )
               ) : loadingParasites ? (
                 <p className="text-sm text-muted-foreground">Parazitlar ro‘yxati yuklanmoqda...</p>
               ) : parasites.length === 0 ? (
@@ -396,6 +612,30 @@ export default function AnalysisDetail() {
                       Orqaga
                     </Button>
                   </motion.div>
+                ) : isWaterCheckAnalysis ? (
+                  <>
+                    <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className="flex-1">
+                      <Button
+                        type="button"
+                        onClick={() => void handleSaveWaterResults()}
+                        disabled={loadingDetail || !detail || savingResults || loadingWaterChecks}
+                        className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 shadow-lg shadow-blue-500/30 dark:shadow-blue-500/20 rounded-xl h-12"
+                      >
+                        <Save className="h-4 w-4 mr-2" />
+                        {savingResults ? "Saqlanmoqda…" : "Natijalarni saqlash"}
+                      </Button>
+                    </motion.div>
+                    <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => navigate(listPath)}
+                        className="rounded-xl h-12 px-8"
+                      >
+                        Bekor qilish
+                      </Button>
+                    </motion.div>
+                  </>
                 ) : (
                   <>
                     <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className="flex-1">

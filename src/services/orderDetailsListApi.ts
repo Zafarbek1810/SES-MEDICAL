@@ -14,6 +14,8 @@ export type OrderDetailListItem = {
   analysisId: number;
   analysisNameUz: string;
   analysisNameRu: string;
+  /** Masalan: NGUT, SNGUA */
+  analysisShortName: string | null;
   analysisPriceId: number;
   laboratoryId: number;
   laboratoryNameUz: string;
@@ -78,6 +80,7 @@ function normalizeOrderDetailListItem(raw: unknown): OrderDetailListItem | null 
     analysisId: toNum(o.analysisId ?? o.analysis_id) ?? 0,
     analysisNameUz: String(o.analysisNameUz ?? o.analysis_name_uz ?? "—").trim() || "—",
     analysisNameRu: String(o.analysisNameRu ?? o.analysis_name_ru ?? "").trim() || "—",
+    analysisShortName: toStr(o.analysisShortName ?? o.analysis_short_name),
     analysisPriceId: toNum(o.analysisPriceId ?? o.analysis_price_id) ?? 0,
     laboratoryId: toNum(o.laboratoryId ?? o.laboratory_id) ?? 0,
     laboratoryNameUz: String(o.laboratoryNameUz ?? o.laboratory_name_uz ?? "—").trim() || "—",

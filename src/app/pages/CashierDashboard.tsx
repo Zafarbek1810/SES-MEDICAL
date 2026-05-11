@@ -151,7 +151,10 @@ export default function CashierDashboard() {
     };
   }, [incomeDate, incomeFromDate, incomeToDate]);
 
-  const money = (v: number | null | undefined): string => `${Number(v ?? 0).toLocaleString("uz-UZ")} so'm`;
+  const money = (v: number | null | undefined): string =>
+    new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 })
+      .format(Number((v ?? 0).toFixed(0)))
+      .replace(/,/g, " ");
 
   const statCards = useMemo(
     () => [

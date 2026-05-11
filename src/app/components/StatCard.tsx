@@ -1,3 +1,4 @@
+import React from "react";
 import { motion } from "motion/react";
 import { Card, CardContent } from "./ui/card";
 import { LucideIcon } from "lucide-react";
@@ -31,7 +32,7 @@ export function StatCard({ title, value, icon: Icon, iconColor = "text-blue-600 
                 {title}
               </motion.p>
               <motion.p 
-                className="text-3xl font-bold bg-gradient-to-br from-foreground to-foreground/70 bg-clip-text"
+                className="text-2xl font-medium bg-gradient-to-br from-foreground to-foreground/70 bg-clip-text"
                 initial={{ opacity: 0, scale: 0.5 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: index * 0.1 + 0.3, type: "spring", stiffness: 200 }}

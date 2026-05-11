@@ -67,12 +67,21 @@ import type { CourseDto } from "../../services/coursesApi";
 import { createCourse, fetchCourses, updateCourse } from "../../services/coursesApi";
 import type { CoursePriceDto } from "../../services/coursePricesApi";
 import { createCoursePrice, fetchCoursePrices, updateCoursePrice } from "../../services/coursePricesApi";
+import type { CompanyDto } from "../../services/spCompaniesApi";
+import {
+  createCompany,
+  deleteCompany as deleteCompanyApi,
+  fetchCompanies,
+  fetchCompany,
+  updateCompany,
+} from "../../services/spCompaniesApi";
 
 type DeleteTarget =
   | { type: "lab"; id: number; name: string }
   | { type: "analysis"; id: number; name: string }
   | { type: "analysisPrice"; id: number; label: string }
   | { type: "user"; id: number; name: string }
+  | { type: "company"; id: number; name: string }
   | { type: "workplace"; id: number; name: string };
 
 type UserToggleTarget = {
@@ -116,6 +125,17 @@ const emptyUserForm = () => ({
   laboratoryId: "",
 });
 
+const emptyCompanyForm = () => ({
+  name: "",
+  address: "",
+  mailIndex: "",
+  email: "",
+  phoneNumber: "",
+  telegram: "",
+  regionId: "",
+  districtId: "",
+});
+
 export default function AdminPanel() {
   const [users, setUsers] = useState<UserDto[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -157,6 +177,7 @@ export default function AdminPanel() {
   const [isWorkplaceDialogOpen, setIsWorkplaceDialogOpen] = useState(false);
   const [isCourseDialogOpen, setIsCourseDialogOpen] = useState(false);
   const [isCoursePriceDialogOpen, setIsCoursePriceDialogOpen] = useState(false);
+  const [isCompanyDialogOpen, setIsCompanyDialogOpen] = useState(false);
 
   const [workplaces, setWorkplaces] = useState<WorkplaceDto[]>([]);
   const [loadingWorkplaces, setLoadingWorkplaces] = useState(false);
@@ -165,6 +186,17 @@ export default function AdminPanel() {
   const [workplaceDistricts, setWorkplaceDistricts] = useState<ReferenceItem[]>([]);
   const [loadingWorkplaceDistricts, setLoadingWorkplaceDistricts] = useState(false);
   const [workplaceDistrictLabels, setWorkplaceDistrictLabels] = useState<Record<number, string>>({});
+  const [companies, setCompanies] = useState<CompanyDto[]>([]);
+  const [loadingCompanies, setLoadingCompanies] = useState(false);
+  const [companyPage, setCompanyPage] = useState(0);
+  const [companyPageSize, setCompanyPageSize] = useState(10);
+  const [companyTotalPages, setCompanyTotalPages] = useState(1);
+  const [companyTotalElements, setCompanyTotalElements] = useState(0);
+  const [companyForm, setCompanyForm] = useState(emptyCompanyForm());
+  const [editingCompany, setEditingCompany] = useState<CompanyDto | null>(null);
+  const [companyDistricts, setCompanyDistricts] = useState<ReferenceItem[]>([]);
+  const [loadingCompanyDistricts, setLoadingCompanyDistricts] = useState(false);
+  const [companyDistrictLabels, setCompanyDistrictLabels] = useState<Record<number, string>>({});
 
   const [editingLab, setEditingLab] = useState<LaboratoryDto | null>(null);
   const [editingAnalysis, setEditingAnalysis] = useState<AnalysisDto | null>(null);
@@ -338,6 +370,25 @@ export default function AdminPanel() {
     }
   };
 
+  const loadCompanies = async (pageArg?: number, sizeArg?: number) => {
+    setLoadingCompanies(true);
+    try {
+      const page = pageArg ?? companyPage;
+      const size = sizeArg ?? companyPageSize;
+      const res = await fetchCompanies(page, size);
+      setCompanies(res.items);
+      setCompanyPage(res.page);
+      setCompanyPageSize(res.size);
+      setCompanyTotalPages(Math.max(1, res.totalPages));
+      setCompanyTotalElements(res.totalElements);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Korxonalar yuklanmadi");
+      setCompanies([]);
+    } finally {
+      setLoadingCompanies(false);
+    }
+  };
+
   const loadReferenceGeo = async () => {
     setLoadingRefGeo(true);
     try {
@@ -397,6 +448,10 @@ export default function AdminPanel() {
   useEffect(() => {
     void loadUsers();
   }, [userPage, userPageSize]);
+
+  useEffect(() => {
+    void loadCompanies(companyPage, companyPageSize);
+  }, [companyPage, companyPageSize]);
 
   /** Foydalanuvchi yaratish: viloyat → tumanlar */
   useEffect(() => {
@@ -537,6 +592,33 @@ export default function AdminPanel() {
     };
   }, [workplaceForm.regionId]);
 
+  /** Korxona formasi: viloyat → tumanlar */
+  useEffect(() => {
+    const rid = Number(companyForm.regionId);
+    if (!Number.isFinite(rid) || rid <= 0) {
+      setCompanyDistricts([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingCompanyDistricts(true);
+    void fetchDistricts(rid)
+      .then((list) => {
+        if (!cancelled) setCompanyDistricts(list);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "Tumanlar yuklanmadi");
+          setCompanyDistricts([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCompanyDistricts(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [companyForm.regionId]);
+
   /** Ish joylari jadvalida tuman nomlari */
   useEffect(() => {
     const regionIds = [...new Set(workplaces.map((w) => w.regionId))];
@@ -563,6 +645,33 @@ export default function AdminPanel() {
       cancelled = true;
     };
   }, [workplaces]);
+
+  /** Korxonalar jadvalida tuman nomlari */
+  useEffect(() => {
+    const regionIds = [...new Set(companies.map((x) => x.regionId))];
+    if (regionIds.length === 0) {
+      setCompanyDistrictLabels({});
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(regionIds.map((rid) => fetchDistricts(rid)))
+      .then((lists) => {
+        if (cancelled) return;
+        const next: Record<number, string> = {};
+        for (const list of lists) {
+          for (const d of list) {
+            next[d.id] = referenceNameLatLabel(d);
+          }
+        }
+        setCompanyDistrictLabels(next);
+      })
+      .catch(() => {
+        if (!cancelled) setCompanyDistrictLabels({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [companies]);
 
   /** Jadval va tasdiq matni: ro‘yxatdagi viloyatlar bo‘yicha tuman nomlari */
   useEffect(() => {
@@ -671,6 +780,10 @@ export default function AdminPanel() {
         await deleteUserApi(t.id);
         toast.success("Foydalanuvchi o‘chirildi");
         await loadUsers();
+      } else if (t.type === "company") {
+        await deleteCompanyApi(t.id);
+        toast.success("Korxona o‘chirildi");
+        await loadCompanies();
       } else {
         await deleteWorkplaceApi(t.id);
         toast.success("Ish joyi o‘chirildi");
@@ -1105,6 +1218,88 @@ export default function AdminPanel() {
     setDeleteTarget({ type: "workplace", id: row.id, name: row.name });
   };
 
+  const openCompanyCreate = () => {
+    setEditingCompany(null);
+    setCompanyForm(emptyCompanyForm());
+    setIsCompanyDialogOpen(true);
+  };
+
+  const openCompanyEdit = (row: CompanyDto) => {
+    setEditingCompany(row);
+    setCompanyForm({
+      name: row.name,
+      address: row.address,
+      mailIndex: row.mailIndex,
+      email: row.email,
+      phoneNumber: row.phoneNumber,
+      telegram: row.telegram,
+      regionId: String(row.regionId),
+      districtId: String(row.districtId),
+    });
+    setIsCompanyDialogOpen(true);
+    void fetchCompany(row.id)
+      .then((full) => {
+        setEditingCompany(full);
+        setCompanyForm({
+          name: full.name,
+          address: full.address,
+          mailIndex: full.mailIndex,
+          email: full.email,
+          phoneNumber: full.phoneNumber,
+          telegram: full.telegram,
+          regionId: String(full.regionId),
+          districtId: String(full.districtId),
+        });
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : "Korxona ma’lumoti yuklanmadi"));
+  };
+
+  const handleSaveCompany = async () => {
+    if (!companyForm.name.trim()) {
+      toast.error("Korxona nomini kiriting");
+      return;
+    }
+    const rid = Number(companyForm.regionId);
+    const did = Number(companyForm.districtId);
+    if (!Number.isFinite(rid) || rid <= 0) {
+      toast.error("Viloyatni tanlang");
+      return;
+    }
+    if (!Number.isFinite(did) || did <= 0) {
+      toast.error("Tumanni tanlang");
+      return;
+    }
+    const body = {
+      name: companyForm.name.trim(),
+      address: companyForm.address.trim(),
+      mailIndex: companyForm.mailIndex.trim(),
+      email: companyForm.email.trim(),
+      phoneNumber: companyForm.phoneNumber.trim(),
+      telegram: companyForm.telegram.trim(),
+      regionId: rid,
+      districtId: did,
+    };
+    try {
+      if (editingCompany) {
+        await updateCompany(editingCompany.id, body);
+        toast.success("Korxona yangilandi");
+      } else {
+        await createCompany(body);
+        toast.success("Korxona qo‘shildi");
+      }
+      setIsCompanyDialogOpen(false);
+      setEditingCompany(null);
+      setCompanyForm(emptyCompanyForm());
+      await loadCompanies();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Xatolik");
+    }
+  };
+
+  const requestDeleteCompany = (row: CompanyDto) => {
+    setDeleteTarget({ type: "company", id: row.id, name: row.name });
+  };
+
   const filteredUsers = users.filter((user) => {
     const q = searchTerm.toLowerCase();
     const full = formatUserFullName(user).toLowerCase();
@@ -1150,6 +1345,10 @@ export default function AdminPanel() {
           <TabsTrigger value="course-prices">
             <Banknote className="h-4 w-4 mr-2" />
             Kurs narxlari
+          </TabsTrigger>
+          <TabsTrigger value="companies">
+            <Building2 className="h-4 w-4 mr-2" />
+            Korxonalar
           </TabsTrigger>
           <TabsTrigger value="jobs">
             <Briefcase className="h-4 w-4 mr-2" />
@@ -2335,6 +2534,259 @@ export default function AdminPanel() {
           </Card>
         </TabsContent>
 
+        {/* Korxonalar — API */}
+        <TabsContent value="companies" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Korxonalar</CardTitle>
+                  <CardDescription>Korxonalarni yaratish, tahrirlash va o‘chirish</CardDescription>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button className="bg-blue-600 hover:bg-blue-700" onClick={openCompanyCreate}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Korxona qo‘shish
+                  </Button>
+                  <Dialog
+                    open={isCompanyDialogOpen}
+                    onOpenChange={(open) => {
+                      setIsCompanyDialogOpen(open);
+                      if (!open) {
+                        setEditingCompany(null);
+                        setCompanyForm(emptyCompanyForm());
+                      }
+                    }}
+                  >
+                    <DialogContent className="sm:max-w-lg">
+                      <DialogHeader>
+                        <DialogTitle>{editingCompany ? "Korxonani tahrirlash" : "Yangi korxona"}</DialogTitle>
+                        <DialogDescription>
+                          {editingCompany ? "Ma’lumotlarni yangilang" : "Korxona ma’lumotlarini kiriting"}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="companyName">Korxona nomi</Label>
+                          <Input
+                            id="companyName"
+                            value={companyForm.name}
+                            onChange={(e) => setCompanyForm({ ...companyForm, name: e.target.value })}
+                            placeholder="Korxona nomi"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="companyAddress">Manzil</Label>
+                          <Input
+                            id="companyAddress"
+                            value={companyForm.address}
+                            onChange={(e) => setCompanyForm({ ...companyForm, address: e.target.value })}
+                            placeholder="Manzil"
+                          />
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="companyMailIndex">Pochta indeksi</Label>
+                            <Input
+                              id="companyMailIndex"
+                              value={companyForm.mailIndex}
+                              onChange={(e) => setCompanyForm({ ...companyForm, mailIndex: e.target.value })}
+                              placeholder="Masalan: 210300"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="companyEmail">Email</Label>
+                            <Input
+                              id="companyEmail"
+                              type="email"
+                              value={companyForm.email}
+                              onChange={(e) => setCompanyForm({ ...companyForm, email: e.target.value })}
+                              placeholder="user@example.com"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="companyPhone">Telefon</Label>
+                            <Input
+                              id="companyPhone"
+                              value={companyForm.phoneNumber}
+                              onChange={(e) => setCompanyForm({ ...companyForm, phoneNumber: e.target.value })}
+                              placeholder="+998..."
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="companyTelegram">Telegram</Label>
+                            <Input
+                              id="companyTelegram"
+                              value={companyForm.telegram}
+                              onChange={(e) => setCompanyForm({ ...companyForm, telegram: e.target.value })}
+                              placeholder="@username"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Viloyat</Label>
+                          <Select
+                            value={companyForm.regionId}
+                            onValueChange={(v) => setCompanyForm({ ...companyForm, regionId: v, districtId: "" })}
+                            disabled={loadingRefGeo}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={loadingRefGeo ? "Yuklanmoqda..." : "Viloyatni tanlang"} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {regions.map((r) => (
+                                <SelectItem key={r.id} value={String(r.id)}>
+                                  {referenceNameLatLabel(r)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Tuman</Label>
+                          <Select
+                            value={companyForm.districtId}
+                            onValueChange={(v) => setCompanyForm({ ...companyForm, districtId: v })}
+                            disabled={loadingCompanyDistricts || !companyForm.regionId}
+                          >
+                            <SelectTrigger>
+                              <SelectValue
+                                placeholder={
+                                  !companyForm.regionId
+                                    ? "Avval viloyatni tanlang"
+                                    : loadingCompanyDistricts
+                                      ? "Yuklanmoqda..."
+                                      : "Tumanni tanlang"
+                                }
+                              />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {companyDistricts.map((d) => (
+                                <SelectItem key={d.id} value={String(d.id)}>
+                                  {referenceNameLatLabel(d)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Button onClick={() => void handleSaveCompany()} className="w-full bg-blue-600 hover:bg-blue-700">
+                          {editingCompany ? "Saqlash" : "Korxona qo‘shish"}
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>№</TableHead>
+                    <TableHead>Nomi</TableHead>
+                    <TableHead>Manzil</TableHead>
+                    <TableHead>Aloqa</TableHead>
+                    <TableHead>Viloyat</TableHead>
+                    <TableHead>Tuman</TableHead>
+                    <TableHead>Amallar</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loadingCompanies ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                        Yuklanmoqda...
+                      </TableCell>
+                    </TableRow>
+                  ) : companies.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                        Korxonalar yo‘q
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    companies.map((row, idx) => (
+                      <TableRow key={row.id}>
+                        <TableCell className="font-medium tabular-nums">
+                          {companyPage * companyPageSize + idx + 1}
+                        </TableCell>
+                        <TableCell>{row.name}</TableCell>
+                        <TableCell>{row.address || "—"}</TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <div>{row.phoneNumber || "—"}</div>
+                            <div className="text-xs text-muted-foreground">{row.email || row.telegram || "—"}</div>
+                          </div>
+                        </TableCell>
+                        <TableCell>{row.regionNameLat || regionLatNameById.get(row.regionId) || row.regionId}</TableCell>
+                        <TableCell>{row.districtNameLat || companyDistrictLabels[row.districtId] || row.districtId}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => openCompanyEdit(row)}>
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => requestDeleteCompany(row)}>
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={String(companyPageSize)}
+                    onValueChange={(v) => {
+                      setCompanyPageSize(Number(v));
+                      setCompanyPage(0);
+                    }}
+                  >
+                    <SelectTrigger className="w-[110px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10 / sahifa</SelectItem>
+                      <SelectItem value="20">20 / sahifa</SelectItem>
+                      <SelectItem value="50">50 / sahifa</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-sm text-muted-foreground">Jami: {companyTotalElements} ta</p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={companyPage <= 0 || loadingCompanies}
+                    onClick={() => setCompanyPage((p) => Math.max(0, p - 1))}
+                    aria-label="Oldingi sahifa"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-sm tabular-nums px-2">
+                    {companyPage + 1} / {companyTotalPages}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={loadingCompanies || companyPage >= companyTotalPages - 1}
+                    onClick={() => setCompanyPage((p) => p + 1)}
+                    aria-label="Keyingi sahifa"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* Ish joylari — API */}
         <TabsContent value="jobs" className="space-y-6">
           <Card>
@@ -2531,6 +2983,11 @@ export default function AdminPanel() {
               ) : deleteTarget?.type === "user" ? (
                 <>
                   <span className="font-medium text-foreground">«{deleteTarget.name}»</span> foydalanuvchisi butunlay
+                  o‘chiriladi. Bu amalni qaytarib bo‘lmaydi.
+                </>
+              ) : deleteTarget?.type === "company" ? (
+                <>
+                  <span className="font-medium text-foreground">«{deleteTarget.name}»</span> korxonasi butunlay
                   o‘chiriladi. Bu amalni qaytarib bo‘lmaydi.
                 </>
               ) : deleteTarget?.type === "workplace" ? (

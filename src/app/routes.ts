@@ -7,8 +7,10 @@ import CashierAnalysesPage from "./pages/CashierAnalysesPage";
 import SanMinimumPage from "./pages/SanMinimumPage";
 import SanMinimumStatsPage from "./pages/SanMinimumStatsPage";
 import LaborantDashboard from "./pages/LaborantDashboard";
+import LaborantAnalysesPage from "./pages/LaborantAnalysesPage";
 import LabDirectorDashboard from "./pages/LabDirectorDashboard";
 import LabDirectorAnalysesPage from "./pages/LabDirectorAnalysesPage";
+import FecesParasitesOrderDetailPdfPage from "./pages/FecesParasitesOrderDetailPdfPage";
 import CompanyDirectorDashboard from "./pages/CompanyDirectorDashboard";
 import AdminPanel from "./pages/AdminPanel";
 import EmployeesPage from "./pages/EmployeesPage";
@@ -62,6 +64,10 @@ export const router = createBrowserRouter([
         Component: LaborantDashboard,
       },
       {
+        path: "laborant/analyses",
+        Component: LaborantAnalysesPage,
+      },
+      {
         path: "laborant/analysis/:id",
         Component: AnalysisDetail,
       },
@@ -72,6 +78,10 @@ export const router = createBrowserRouter([
       {
         path: "lab-director/analyses",
         Component: LabDirectorAnalysesPage,
+      },
+      {
+        path: "lab-director/analyses/feces-parasites-pdf/:orderDetailId",
+        Component: FecesParasitesOrderDetailPdfPage,
       },
       {
         path: "lab-director/analysis/:id",

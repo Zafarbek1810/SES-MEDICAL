@@ -308,12 +308,15 @@ function buildAppliedFilters(draft: {
 export type SanMinimumsTabProps = {
   /** Kassa: true. SAN_MINIMUM roli: yangi yozuv qo‘shish o‘chiriladi. */
   allowCreate?: boolean;
+  /** Kassa: true. SAN_MINIMUM roli: jadvaldan o‘chirish tugmasi ko‘rinmaydi. */
+  allowDelete?: boolean;
   /** 1/2/3-kun sanalari tahrirlash — faqat SAN_MINIMUM roli (kassada ko‘rinmaydi). */
   showCourseDatesOnEdit?: boolean;
 };
 
 export default function SanMinimumsTab({
   allowCreate = true,
+  allowDelete = true,
   showCourseDatesOnEdit = false,
 }: SanMinimumsTabProps) {
   const [items, setItems] = useState<SanMinimumDto[]>([]);
@@ -804,7 +807,14 @@ export default function SanMinimumsTab({
             enumName(courseStates, row.courseState).trim().toUpperCase() === "COMPLETED";
           return (
             <Space size="small">
-              <Button type="text" size="small" icon={<Edit className="h-4 w-4" />} onClick={() => void openEdit(row)} />
+              <Button
+                type="text"
+                size="small"
+                disabled={courseDone}
+                title={courseDone ? "Kurs tugatilgan — tahrirlash mumkin emas" : undefined}
+                icon={<Edit className="h-4 w-4" />}
+                onClick={() => void openEdit(row)}
+              />
               {courseDone ? (
                 <Button
                   type="text"
@@ -815,19 +825,21 @@ export default function SanMinimumsTab({
                   onClick={() => void openCertificate(row)}
                 />
               ) : null}
-              <Button
-                type="text"
-                size="small"
-                danger
-                icon={<Trash2 className="h-4 w-4" />}
-                onClick={() => setDeleteTarget(row)}
-              />
+              {allowDelete ? (
+                <Button
+                  type="text"
+                  size="small"
+                  danger
+                  icon={<Trash2 className="h-4 w-4" />}
+                  onClick={() => setDeleteTarget(row)}
+                />
+              ) : null}
             </Space>
           );
         },
       },
     ],
-    [page, pageSize, sanPaymentTypes, courseStates, workplaces, openCertificate],
+    [page, pageSize, sanPaymentTypes, courseStates, workplaces, openCertificate, allowDelete],
   );
 
   return (

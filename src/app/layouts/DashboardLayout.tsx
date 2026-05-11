@@ -145,6 +145,24 @@ const labDirectorAnalysesNav: DashboardNavItem = {
   color: "text-teal-600 dark:text-teal-400",
 };
 
+const laborantStatsNav: DashboardNavItem = {
+  id: "laborant-stats",
+  name: "Statistika",
+  shortName: "Hisobot",
+  path: "/laborant",
+  icon: BarChart3,
+  color: "text-sky-600 dark:text-sky-400",
+};
+
+const laborantAnalysesNav: DashboardNavItem = {
+  id: "laborant-analyses",
+  name: "Tahlillar",
+  shortName: "Tayinlangan",
+  path: "/laborant/analyses",
+  icon: FlaskConical,
+  color: "text-teal-600 dark:text-teal-400",
+};
+
 const roles: DashboardNavItem[] = [
   { id: "laborant", name: "Laborant", shortName: "Laborant", path: "/laborant", icon: Microscope, color: "text-green-600 dark:text-green-400" },
   { id: "lab-director", name: "Laboratoriya Direktori", shortName: "Direktor", path: "/lab-director", icon: ClipboardCheck, color: "text-purple-600 dark:text-purple-400" },
@@ -190,6 +208,9 @@ function resolveRolesForUser(role: string | undefined, apiRoles: ReferenceItem[]
   if (key === "LAB_DIRECTOR" || key === "LABORATORY_DIRECTOR") {
     return [labDirectorStatsNav, labDirectorAnalysesNav];
   }
+  if (key === "LABORATORY_ASSISTANT") {
+    return [laborantStatsNav, laborantAnalysesNav];
+  }
   const fromCode = key ? ROLE_NAV_BY_CODE[key] : undefined;
   const fromPath = roles.find((r) => r.path === allowedPath);
   const base = fromCode ?? fromPath;
@@ -220,6 +241,12 @@ function navPathMatches(pathname: string, navPath: string): boolean {
   }
   if (navPath === "/cashier/analyses") {
     return pathname === "/cashier/analyses" || pathname.startsWith("/cashier/analyses/");
+  }
+  if (navPath === "/laborant") {
+    return pathname === "/laborant";
+  }
+  if (navPath === "/laborant/analyses") {
+    return pathname === "/laborant/analyses" || pathname.startsWith("/laborant/analysis/");
   }
   if (navPath === "/lab-director") {
     return pathname === "/lab-director";
