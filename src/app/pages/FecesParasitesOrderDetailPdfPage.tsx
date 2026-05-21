@@ -6,8 +6,13 @@ import { Card, CardContent } from "../components/ui/card";
 import { toast } from "sonner";
 import { fetchFecesParasitesPdfBlobByOrderDetail } from "../../services/analysisResultFecesParasitesApi";
 import { fetchParasiteWaterChecksPdfBlobByOrderDetail } from "../../services/analysisResultParasiteWaterChecksApi";
+import { fetchOutdoorEquipmentsPdfBlobByOrderDetail } from "../../services/analysisResultOutdoorEquipmentsApi";
+import { fetchSoilParasitesPdfBlobByOrderDetail } from "../../services/analysisResultSoilParasitesApi";
 
 const LIST_PATH = "/lab-director/analyses";
+
+const OUTDOOR_EQUIPMENT_ANALYSIS_SHORT_NAME = "TMAOS";
+const SOIL_PARASITE_ANALYSIS_SHORT_NAME = "TNGUT";
 
 export default function FecesParasitesOrderDetailPdfPage() {
   const { orderDetailId: idParam } = useParams();
@@ -19,6 +24,8 @@ export default function FecesParasitesOrderDetailPdfPage() {
     [searchParams]
   );
   const isWaterCheckPdf = analysisShortName === "SNGUA";
+  const isOutdoorTmaosPdf = analysisShortName === OUTDOOR_EQUIPMENT_ANALYSIS_SHORT_NAME;
+  const isSoilTngutPdf = analysisShortName === SOIL_PARASITE_ANALYSIS_SHORT_NAME;
 
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -45,9 +52,13 @@ export default function FecesParasitesOrderDetailPdfPage() {
           return null;
         });
 
-        const blob = isWaterCheckPdf
-          ? await fetchParasiteWaterChecksPdfBlobByOrderDetail(orderDetailId)
-          : await fetchFecesParasitesPdfBlobByOrderDetail(orderDetailId);
+        const blob = isSoilTngutPdf
+          ? await fetchSoilParasitesPdfBlobByOrderDetail(orderDetailId)
+          : isOutdoorTmaosPdf
+            ? await fetchOutdoorEquipmentsPdfBlobByOrderDetail(orderDetailId)
+            : isWaterCheckPdf
+              ? await fetchParasiteWaterChecksPdfBlobByOrderDetail(orderDetailId)
+              : await fetchFecesParasitesPdfBlobByOrderDetail(orderDetailId);
         if (cancelled) return;
 
         const url = URL.createObjectURL(blob);
@@ -58,9 +69,13 @@ export default function FecesParasitesOrderDetailPdfPage() {
         createdUrl = url;
         setPdfUrl(url);
         setFileName(
-          isWaterCheckPdf
-            ? `parasite-water-checks-${orderDetailId}.pdf`
-            : `feces-parasites-${orderDetailId}.pdf`
+          isSoilTngutPdf
+            ? `soil-parasites-${orderDetailId}.pdf`
+            : isOutdoorTmaosPdf
+              ? `outdoor-equipments-${orderDetailId}.pdf`
+              : isWaterCheckPdf
+                ? `parasite-water-checks-${orderDetailId}.pdf`
+                : `feces-parasites-${orderDetailId}.pdf`
         );
       } catch (e) {
         if (!cancelled) {
@@ -78,7 +93,7 @@ export default function FecesParasitesOrderDetailPdfPage() {
       if (createdUrl) URL.revokeObjectURL(createdUrl);
       setPdfUrl(null);
     };
-  }, [isWaterCheckPdf, orderDetailId]);
+  }, [isSoilTngutPdf, isOutdoorTmaosPdf, isWaterCheckPdf, orderDetailId]);
 
   const handleDownload = () => {
     if (!pdfUrl) return;

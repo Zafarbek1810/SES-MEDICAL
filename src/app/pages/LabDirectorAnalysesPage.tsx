@@ -6,6 +6,14 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { toast } from "sonner";
 import { formatTableDateTime } from "../../utils/tableDateFormat";
@@ -47,6 +55,8 @@ export default function LabDirectorAnalysesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [updatingIds, setUpdatingIds] = useState<number[]>([]);
+  /** Tasdiqlash — avval dialog, keyin API */
+  const [approveDialogRow, setApproveDialogRow] = useState<OrderDetailListItem | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,6 +147,15 @@ export default function LabDirectorAnalysesPage() {
 
   const isFinalDecisionStatus = (analysisStatus: number): boolean =>
     analysisStatus === 34 || analysisStatus === 44;
+
+  const closeApproveDialog = () => setApproveDialogRow(null);
+
+  const confirmApproveAnalysis = async () => {
+    if (!approveDialogRow) return;
+    const id = approveDialogRow.id;
+    closeApproveDialog();
+    await updateAnalysisStatus(id, 34);
+  };
 
   return (
     <div className="space-y-6">
@@ -258,7 +277,7 @@ export default function LabDirectorAnalysesPage() {
                             value={actionSelectValue(analysis.analysisStatus)}
                             onValueChange={(value) => {
                               if (value === "approve") {
-                                void updateAnalysisStatus(analysis.id, 34);
+                                setApproveDialogRow(analysis);
                               } else if (value === "reject") {
                                 void updateAnalysisStatus(analysis.id, 44);
                               }
@@ -293,6 +312,48 @@ export default function LabDirectorAnalysesPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={approveDialogRow !== null} onOpenChange={(open) => !open && closeApproveDialog()}>
+        <DialogContent className="rounded-2xl sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Tahlilni tasdiqlash</DialogTitle>
+            <DialogDescription>
+              Ushbu tahlilni tasdiqlashni xohlaysizmi? Tasdiqlangach holat «Bajarildi» ga o‘tadi.
+            </DialogDescription>
+          </DialogHeader>
+          {approveDialogRow && (
+            <div className="space-y-1 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+              <p>
+                <span className="text-muted-foreground">Bemor: </span>
+                <span className="font-medium text-foreground">{patientFio(approveDialogRow)}</span>
+              </p>
+              <p>
+                <span className="text-muted-foreground">Tahlil: </span>
+                <span className="font-medium text-foreground">
+                  {approveDialogRow.analysisNameUz || "—"}
+                </span>
+              </p>
+              <p className="tabular-nums">
+                <span className="text-muted-foreground">Qator №: </span>
+                <span className="font-medium text-foreground">{approveDialogRow.id}</span>
+              </p>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" className="rounded-xl" onClick={closeApproveDialog}>
+              Orqaga
+            </Button>
+            <Button
+              type="button"
+              className="rounded-xl"
+              disabled={approveDialogRow != null && updatingIds.includes(approveDialogRow.id)}
+              onClick={() => void confirmApproveAnalysis()}
+            >
+              Tasdiqlash
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
